@@ -4,26 +4,62 @@ A browser-based 3D structural engineering tool: build a multi-storey frame, appl
 
 Every result shown is computed by a real 3D frame finite element solver. Anything that is an assumption (for example the slab-to-beam tributary distribution in Phase 1) is labelled as such in the interface and in [docs/conventions.md](docs/conventions.md).
 
-## Quick start
+## How to run (step by step)
 
-Requirements: Python 3.10+, Node 18+.
+### 1. Install the prerequisites (one time)
+- **Python 3.10 or newer**: https://www.python.org/downloads/ — on Windows tick **"Add python.exe to PATH"** in the installer.
+- **Node.js 18 or newer (LTS)**: https://nodejs.org/
+- **Git** (optional, to clone): https://git-scm.com/downloads
 
-```bash
-./run.sh            # installs deps, builds the frontend, serves everything at http://localhost:8000
+Check in a terminal (Windows: *Command Prompt* or *PowerShell*; Mac: *Terminal*):
+```
+python --version      (Mac/Linux: python3 --version)
+node --version
 ```
 
-Development (hot reload):
+### 2. Get the code
+Either download the ZIP from GitHub (green **Code** button → **Download ZIP**, then unzip), or:
+```
+git clone https://github.com/mammothwora-del/structural-analyze.git
+cd structural-analyze
+```
 
-```bash
+### 3. Start the app
+- **Windows:** double-click `run.bat` (or run `run.bat` in a terminal opened in the folder).
+- **Mac/Linux:** `./run.sh`
+
+The first run downloads packages and takes a few minutes. When you see
+`Uvicorn running on http://127.0.0.1:8000`, open **http://localhost:8000** in Chrome, Edge or Firefox.
+Keep the terminal window open while you use the app; press `Ctrl+C` to stop it.
+
+### Manual commands (if the script doesn't work)
+```
+python -m pip install -r backend/requirements.txt
+cd frontend
+npm install
+npx vite build
+cd ../backend
+python -m uvicorn structural.api:app --port 8000
+```
+
+### 4. Use it
+1. A sample 4-storey building is generated automatically (change it in the **Building** tab on the left, then **Generate building**).
+2. Click **ANALYZE** (top right) or press F5. The status turns **SOLVED**.
+3. The view switches to **Load Path**. Pick a case or combination in the **Load** dropdown (e.g. `ULS2`).
+4. Click a member to inspect it, then **Trace down** / **Trace up**. Keys 1–7 switch modes; **Dashboard** is at the top.
+
+### Troubleshooting
+- `python` not found on Windows: reinstall Python with "Add to PATH" ticked, or use `py` instead of `python`.
+- Red dot at the top right / "Solver backend not reachable": the terminal running the server was closed or failed — re-run the script and read the error.
+- Port 8000 busy: change `--port 8000` to e.g. `--port 8010` and open that address.
+
+### Development (hot reload)
+```
 cd backend && pip install -r requirements.txt && uvicorn structural.api:app --reload --port 8000
 cd frontend && npm install && npm run dev      # http://localhost:5173 (proxies /api to :8000)
 ```
 
-Run the solver tests:
-
-```bash
-cd backend && python -m pytest -q
-```
+Run the solver tests: `cd backend && python -m pytest -q`
 
 ## What Phase 1 contains
 
