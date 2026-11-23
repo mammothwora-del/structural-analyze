@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; margin: 0; overflow: hidden; }
+body { font-family: Inter, system-ui, sans-serif; font-size: 13px; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #243040; border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+.panel-title { @apply text-[11px] font-semibold uppercase tracking-wider text-ink-400; }
+.btn { @apply px-2.5 py-1 rounded border border-ink-700 bg-ink-800 hover:bg-ink-700 text-ink-200 text-xs transition-colors disabled:opacity-40; }
+.btn-primary { @apply px-3 py-1.5 rounded bg-accent text-ink-950 font-semibold text-xs hover:brightness-110 disabled:opacity-40; }
+.input { @apply bg-ink-900 border border-ink-700 rounded px-1.5 py-0.5 text-xs text-ink-200 w-full focus:outline-none focus:border-accent; }
+.tag { @apply text-[10px] px-1.5 py-0.5 rounded font-semibold; }
+.num { @apply font-mono tabular-nums; }
