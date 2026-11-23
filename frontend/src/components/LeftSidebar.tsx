@@ -58,7 +58,7 @@ function Generator() {
   const [p, setP] = useState({
     x: [6, 6, 6], y: [5, 5], h: [4, 3.5, 3.5, 3.5], colB: 0.4, colH: 0.4, mbB: 0.3, mbH: 0.6, sbB: 0.25, sbH: 0.45,
     sec: "y", slab: 0.18, sdl: 1.5, ll: 3.0, rll: 1.0, support: "fixed", fB: 2.0, fT: 0.6, wind: 1.0, cs: 0.08, mat: "C30/37", standard: "EN1990", qa: 250,
-    slabModel: "tributary", mesh: 1.0,
+    slabModel: "shell", mesh: 1.0, walls: "none", wallT: 0.2,
   });
   const [lists, setLists] = useState<Record<string, string>>({});
   const listText = (k: "x" | "y" | "h") => lists[k + u.sys] ?? p[k].map((v) => +u.c("length", v).toFixed(3)).join(", ");
@@ -74,7 +74,7 @@ function Generator() {
     secondary_beam: { shape: "rect", b: p.sbB, h: p.sbH, material: p.mat },
     secondary_beams: p.sec, slab_thickness: p.slab, sdl: p.sdl, live_load: p.ll, roof_live_load: p.rll,
     support: p.support, footing: { B: p.fB, L: p.fB, t: p.fT }, wind_pressure: p.wind, seismic_cs: p.cs, standard: p.standard, allowable_bearing: p.qa,
-    slab_model: p.slabModel, mesh_size: p.mesh,
+    slab_model: p.slabModel, mesh_size: p.mesh, walls: p.walls, wall_thickness: p.wallT,
   });
   const listInput = (k: "x" | "y" | "h") => (
     <input className="input" value={listText(k)} onChange={(e) => {
@@ -116,7 +116,15 @@ function Generator() {
           <option value="tributary">Tributary areas (45°) — assumed</option>
         </select>
       </F>
-      {p.slabModel === "shell" && <F label={`Shell mesh size (${L})`}>{num("mesh", "length")}</F>}
+      <F label="Shear walls (shell FEM)">
+        <select className="input" value={p.walls} onChange={(e) => setP({ ...p, walls: e.target.value })}>
+          <option value="none">none</option>
+          <option value="x">outer frames, parallel to X (middle bay)</option>
+          <option value="xy">outer frames, X and Y (middle bays)</option>
+        </select>
+      </F>
+      {p.walls !== "none" && <F label={`Wall thickness (${D})`}>{num("wallT", "dim")}</F>}
+      {(p.slabModel === "shell" || p.walls !== "none") && <F label={`Shell mesh size (${L})`} hint="smaller = more accurate, slower">{num("mesh", "length")}</F>}
       <div className="panel-title mt-3 mb-2">Foundations</div>
       <div className="grid grid-cols-2 gap-x-2">
         <F label="Support"><select className="input" value={p.support} onChange={(e) => setP({ ...p, support: e.target.value })}><option value="fixed">fixed</option><option value="pinned">pinned</option></select></F>
@@ -151,9 +159,9 @@ function ModelTree() {
   const { model, hiddenTypes, set, maxLevel, exploded, isolated } = useStore();
   if (!model) return null;
   const levels = Math.max(0, ...model.elements.map((e) => e.level ?? 0));
-  const count = (k: string) => k === "slab" ? model.slabs.length : k === "footing" ? model.supports.length :
+  const count = (k: string) => k === "slab" ? model.slabs.length : k === "wall" ? (model.walls?.length ?? 0) : k === "footing" ? model.supports.length :
     model.elements.filter((e) => (k === "column" ? e.type === "column" : k === "brace" ? e.type === "brace" : e.type === "beam" && (e.role === "secondary") === (k === "secondary"))).length;
-  const types: [string, string, string][] = [["column", "Columns", TYPE_COLORS.column], ["main", "Main beams", TYPE_COLORS.main], ["secondary", "Secondary beams", TYPE_COLORS.secondary], ["slab", "Slabs", "#8fa3b8"], ["footing", "Footings", "#6b7a8c"]];
+  const types: [string, string, string][] = [["column", "Columns", TYPE_COLORS.column], ["main", "Main beams", TYPE_COLORS.main], ["secondary", "Secondary beams", TYPE_COLORS.secondary], ["slab", "Slabs", "#8fa3b8"], ["wall", "Walls", "#a7b4c2"], ["footing", "Footings", "#6b7a8c"]];
   return (
     <div>
       <div className="panel-title mb-2">Structural components</div>
@@ -180,7 +188,7 @@ function ModelTree() {
         <div>Supports: <span className="num">{model.supports.length}</span></div>
         <div>Load cases: <span className="num">{model.load_cases.length}</span>, combinations: <span className="num">{model.combinations.length}</span></div>
       </div>
-      <div className="mt-4 text-[10px] text-ink-400 leading-snug">Phase 1 editing: assign sections, delete members, add members between two nodes (shift-click two nodes in Model mode), supports and loads via the inspector. Copy/move/rotate and walls/bracing/trusses come in later phases.</div>
+      <div className="mt-4 text-[10px] text-ink-400 leading-snug">Phase 1 editing: assign sections, delete members, add members between two nodes (shift-click two nodes in Model mode), supports and loads via the inspector. Slabs and shear walls are analysed with shell elements (Phase 2). Copy/move/rotate and bracing/trusses come in later phases.</div>
     </div>
   );
 }

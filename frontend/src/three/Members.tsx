@@ -5,6 +5,8 @@ import type { Display } from "../lib/display";
 import { elementAxes, sectionDims } from "../lib/geometry";
 import type { Element, Model, Results, Vec3 } from "../lib/types";
 import { useStore } from "../store";
+import { allPositions } from "../lib/shells";
+import { useDeformAnimation } from "./Shells";
 
 export const TYPE_COLORS: Record<string, string> = {
   column: "#7fb6dc",
@@ -30,13 +32,11 @@ export function useVisibleElements(model: Model) {
   }, [model, hiddenTypes, maxLevel, isolated]);
 }
 
+/** Node positions (exploded view applied), including shell mesh nodes of the last analysis. */
 export function usePositions(model: Model) {
   const exploded = useStore((s) => s.exploded);
-  return useMemo(() => {
-    const m = new Map<string, Vec3>();
-    for (const n of model.nodes) m.set(n.id, [n.x, n.y, n.z + (n.level ?? 0) * exploded]);
-    return m;
-  }, [model, exploded]);
+  const results = useStore((s) => s.results);
+  return useMemo(() => allPositions(model, results, exploded), [model, results, exploded]);
 }
 
 interface Props {
@@ -60,7 +60,7 @@ export function Members({ model, results, display, deform, colorMode, highlight,
   const nodes = useMemo(() => new Map(model.nodes.map((n) => [n.id, [n.x, n.y, n.z] as Vec3])), [model]);
 
   const { geometry, triOwner } = useMemo(() => {
-    const P: number[] = [], N: number[] = [], C: number[] = [], I: number[] = [];
+    const P: number[] = [], N: number[] = [], C: number[] = [], I: number[] = [], D: number[] = [];
     const triOwner: { start: number; id: string }[] = [];
     const col = new THREE.Color();
     const sel = new Set([...(selection?.kind === "element" ? [selection.id] : []), ...multi]);
@@ -74,11 +74,9 @@ export function Members({ model, results, display, deform, colorMode, highlight,
       const st = res?.elements[el.id];
       const xs = st ? st.x : [0, L];
       const vals = display?.values[el.id];
-      const centers: THREE.Vector3[] = xs.map((x, k) => {
-        const c = new THREE.Vector3(...pi).addScaledVector(ex, x);
-        if (deform && st) c.add(new THREE.Vector3(...(st.disp[k] as Vec3)).multiplyScalar(deform));
-        return c;
-      });
+      // undeformed centre line; the deformed shape goes into a morph target (animated)
+      const centers: THREE.Vector3[] = xs.map((x) => new THREE.Vector3(...pi).addScaledVector(ex, x));
+      const dsp: number[][] = xs.map((_, k) => (deform && st ? (st.disp[k] as number[]).map((v) => v * deform) : [0, 0, 0]));
       const colors: THREE.Color[] = xs.map((_, k) => {
         if (sel.has(el.id)) return new THREE.Color("#3fb6ff");
         if (highlight) {
@@ -101,6 +99,7 @@ export function Members({ model, results, display, deform, colorMode, highlight,
           for (const [aa, bb] of [[a1, b1], [a2, b2]]) {
             const p = centers[k].clone().addScaledVector(ey, (aa * b) / 2).addScaledVector(ez, (bb * h) / 2);
             P.push(p.x, p.y, p.z);
+            D.push(dsp[k][0], dsp[k][1], dsp[k][2]);
             N.push(faceNormals[f].x, faceNormals[f].y, faceNormals[f].z);
             C.push(colors[k].r, colors[k].g, colors[k].b);
           }
@@ -116,6 +115,7 @@ export function Members({ model, results, display, deform, colorMode, highlight,
         for (const [aa, bb] of corners) {
           const p = centers[k].clone().addScaledVector(ey, (aa * b) / 2).addScaledVector(ez, (bb * h) / 2);
           P.push(p.x, p.y, p.z);
+          D.push(dsp[k][0], dsp[k][1], dsp[k][2]);
           N.push(ex.x * sgn, ex.y * sgn, ex.z * sgn);
           C.push(colors[k].r, colors[k].g, colors[k].b);
         }
@@ -128,6 +128,7 @@ export function Members({ model, results, display, deform, colorMode, highlight,
     g.setAttribute("normal", new THREE.Float32BufferAttribute(N, 3));
     g.setAttribute("color", new THREE.Float32BufferAttribute(C, 3));
     g.setIndex(I);
+    if (deform) { g.morphAttributes.position = [new THREE.Float32BufferAttribute(D, 3)]; g.morphTargetsRelative = true; }
     g.computeBoundingSphere();
     return { geometry: g, triOwner };
   }, [elements, pos, model, results, display, deform, colorMode, highlight, highlightMax, selection, multi, nodes]);
@@ -142,8 +143,12 @@ export function Members({ model, results, display, deform, colorMode, highlight,
     return triOwner[lo]?.id ?? null;
   };
 
+  const ref = useDeformAnimation(deform !== 0);
   return (
     <mesh
+      key={deform ? "def" : "undef"}
+      ref={ref as React.RefObject<THREE.Mesh>}
+      morphTargetInfluences={deform ? [1] : undefined}
       geometry={geometry}
       onClick={(e) => {
         e.stopPropagation();

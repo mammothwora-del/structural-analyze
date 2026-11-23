@@ -3,6 +3,7 @@ import { combinedResult, factorsFor } from "../lib/combine";
 import { COMP_LABEL, fmt, stressLimit, UNITS } from "../lib/display";
 import { footingPressure } from "../lib/footing";
 import { computeFlows, elementTransfers, trace } from "../lib/loadpath";
+import { surfaceStress } from "../lib/shells";
 import type { ForceComp, Load, Model, Results, Stations } from "../lib/types";
 import { useStore, useU } from "../store";
 import type { UnitsApi } from "../lib/units";
@@ -33,6 +34,7 @@ export function Inspector() {
         selection?.kind === "element" ? <ElementPanel model={model} results={usable} id={selection.id} /> :
         selection?.kind === "node" ? <NodePanel model={model} results={usable} id={selection.id} /> :
         selection?.kind === "slab" ? <SlabPanel model={model} results={usable} id={selection.id} /> :
+        selection?.kind === "wall" ? <WallPanel model={model} results={usable} id={selection.id} /> :
         <EmptyPanel />}
     </aside>
   );
@@ -132,7 +134,10 @@ function ElementPanel({ model, results, id }: { model: Model; results: Results |
           <Section title={`Applied loads (${loadSel})`}>
             {sw && <Row k={`Self-weight (${sw.id} × ${factors[sw.id]})`} v={u.f("force", -info.props.A * model.materials[info.material].density * info.L * factors[sw.id])} unit={u.u("force")} />}
             {Object.entries(bySource).map(([k, v]) => <Row key={k} k={k} v={u.f("force", v)} unit={u.u("force")} />)}
-            {!sw && !Object.keys(bySource).length && <div className="text-ink-400 text-xs">No member loads in this case.</div>}
+            {Object.entries(res?.panel_transfer?.[id] ?? {}).map(([g, f]) => (
+              <Row key={g} k={<span>From {g.startsWith("W") ? "wall" : "slab"} <button className="text-accent hover:underline" onClick={() => set({ selection: { kind: g.startsWith("W") ? "wall" : "slab", id: g } })}>{g}</button> (shell FEM, ↓)</span>} v={u.f("force", -f[2])} unit={u.u("force")} />
+            ))}
+            {!sw && !Object.keys(bySource).length && !res?.panel_transfer?.[id] && <div className="text-ink-400 text-xs">No member loads in this case.</div>}
           </Section>
 
           <Section title="Internal forces (extremes)" tag={<Calc />}>
@@ -161,15 +166,16 @@ function ElementPanel({ model, results, id }: { model: Model; results: Results |
             <Section title="Load transfer along d" tag={<Calc />}>
               <Row k="Load carried (max |flow|)" v={u.f("force", flows.through[id])} unit={u.u("force")} />
               <Row k="Applied directly on member" v={u.f("force", tr.memberLoad)} unit={u.u("force")} />
+              {tr.panels.length > 0 && <div className="text-[10px] text-ink-400">of which from slabs/walls along the member (shell FEM): {tr.panels.map((p) => `${p.panel} ${u.f("force", p.value)}`).join(", ")} {u.u("force")}</div>}
               <Row k={`End i (${el.i}) ${flows.ti[id] >= 0 ? "delivers" : "receives"}`} v={u.f("force", Math.abs(flows.ti[id]))} unit={u.u("force")} />
               <Row k={`End j (${el.j}) ${flows.tj[id] >= 0 ? "delivers" : "receives"}`} v={u.f("force", Math.abs(flows.tj[id]))} unit={u.u("force")} />
               <div className="mt-2 text-ink-300 text-xs font-medium">Incoming <Assumed t="PROPORTIONAL SHARE" /></div>
               {tr.incoming.length ? tr.incoming.sort((a, b) => b.value - a.value).slice(0, 8).map((x, k) => (
-                <Row key={k} k={<button className="text-accent hover:underline" onClick={() => x.kind === "element" && set({ selection: { kind: "element", id: x.from } })}>{x.from}</button>} v={`${u.f("force", x.value)} via ${x.via}`} unit={u.u("force")} />
+                <Row key={k} k={<button className="text-accent hover:underline" onClick={() => x.kind === "element" && set({ selection: { kind: "element", id: x.from } })}>{x.from.replace("shells@", "Slabs/walls at ").replace("load@", "Load at ")}</button>} v={`${u.f("force", x.value)} via ${x.via}`} unit={u.u("force")} />
               )) : <div className="text-ink-400 text-xs">{tr.memberLoad > 0 ? "Load is applied directly on this member (see above)." : "—"}</div>}
               <div className="mt-2 text-ink-300 text-xs font-medium">Outgoing</div>
               {tr.outgoing.length ? tr.outgoing.sort((a, b) => b.value - a.value).slice(0, 8).map((x, k) => (
-                <Row key={k} k={<button className="text-accent hover:underline" onClick={() => x.kind === "element" && set({ selection: { kind: "element", id: x.to } })}>{x.to.replace("support@", "Support ")}</button>} v={`${u.f("force", x.value)} via ${x.via}`} unit={u.u("force")} />
+                <Row key={k} k={<button className="text-accent hover:underline" onClick={() => x.kind === "element" && set({ selection: { kind: "element", id: x.to } })}>{x.to.replace("support@", "Support ").replace("shells@", "Into wall/slab at ")}</button>} v={`${u.f("force", x.value)} via ${x.via}`} unit={u.u("force")} />
               )) : <div className="text-ink-400 text-xs">—</div>}
               <div className="mt-2 flex gap-1.5">
                 <button className="btn" onClick={() => set({ trace: trace(model, flows, id, "down"), mode: "loadpath" })}>Trace down ↓</button>
@@ -313,12 +319,13 @@ function SlabPanel({ model, results, id }: { model: Model; results: Results | nu
           </select>
         </div>
       </Section>
-      {t && <Section title="Load distribution to beams" tag={<Assumed t="TRIBUTARY (NOT FEM)" />}>
+      {results?.slab_model === "shell" && <PanelResults model={model} results={results} id={id} />}
+      {t && results?.slab_model !== "shell" && <Section title="Load distribution to beams" tag={<Assumed t="TRIBUTARY (NOT FEM)" />}>
         <Row k="Panel" v={`${u.f("length", t.lx, 2)} × ${u.f("length", t.ly, 2)} ${u.u("length")} — ${t.mode}`} />
         {t.edges.map((e) => (
           <Row key={e.edge} k={`Edge ${e.edge + 1} → ${e.segments.map((g) => g.element).join(", ") || "NO BEAM"}`} v={`${(e.fraction * 100).toFixed(1)} %`} />
         ))}
-        <div className="text-[10px] text-ink-400 mt-1">45° yield-line tributary areas. Slab bending is not analysed in Phase 1; beam/column results are exact for these transferred loads.</div>
+        <div className="text-[10px] text-ink-400 mt-1">45° yield-line tributary areas (slab analysis = tributary). Slab bending is not analysed in this mode; beam/column results are exact for these transferred loads. Choose "Shell FEM" in the Building tab for a calculated slab.</div>
       </Section>}
       <Section title="Add area load">
         <div className="grid grid-cols-2 gap-1">
@@ -329,6 +336,68 @@ function SlabPanel({ model, results, id }: { model: Model; results: Results | nu
       </Section>
       <span className="hidden">{loadSel}{String(!!set)}</span>
     </div>
+  );
+}
+
+function WallPanel({ model, results, id }: { model: Model; results: Results | null; id: string }) {
+  const u = useU();
+  const w = model.walls?.find((x) => x.id === id);
+  if (!w) return null;
+  return (
+    <div>
+      <div className="flex items-start justify-between">
+        <div><div className="text-lg font-semibold">Wall {id}</div><div className="text-ink-400 text-xs">{w.label}</div></div>
+        <span className="tag bg-ink-700 text-ink-200">SHEAR WALL</span>
+      </div>
+      <Section title="Properties">
+        <Row k="Thickness" v={u.f("dim", w.thickness, 1)} unit={u.u("dim")} />
+        <Row k="Material" v={model.materials[w.material ?? ""]?.name ?? w.material} />
+        <Row k="Corners" v={w.corners.join(", ")} />
+        <Row k="Base support" v={w.base_support ?? "on wall/beam below"} />
+      </Section>
+      {results && <PanelResults model={model} results={results} id={id} />}
+    </div>
+  );
+}
+
+/** FEM results of one slab or wall panel (nodal-averaged shell resultants). */
+function PanelResults({ model, results, id }: { model: Model; results: Results; id: string }) {
+  const u = useU();
+  const { loadSel } = useStore();
+  const res = combinedResult(model, results, loadSel);
+  const info = results.mesh?.groups[id];
+  const rows = res?.panel_results?.[id];
+  if (!res || !info || !rows) return null;
+  const ext = (k: number) => { let lo = Infinity, hi = -Infinity; for (const r of rows) { lo = Math.min(lo, r[k]); hi = Math.max(hi, r[k]); } return [lo, hi]; };
+  const umax = Math.max(...info.nodes.map((n) => { const d = res.displacements[n] ?? [0, 0, 0]; return Math.hypot(d[0], d[1], d[2]); }));
+  const uz = Math.min(...info.nodes.map((n) => (res.displacements[n] ?? [0, 0, 0])[2]));
+  const vm = Math.max(...rows.map((r) => { const s = surfaceStress(r, info.t); return Math.max(s.top.vm, s.bottom.vm); }));
+  const transfers = Object.entries(res.panel_transfer ?? {}).map(([eid, per]) => [eid, per[id]] as const).filter(([, f]) => f).sort((a, b) => a[1]![2] - b[1]![2]);
+  const tot = transfers.reduce((s, [, f]) => s + f![2], 0);
+  const ax = (k: number) => info.axes[k].map((v) => (Math.abs(v) < 1e-9 ? 0 : v)).map((v) => v.toFixed(2)).join(", ");
+  const R = ({ k, i, kind }: { k: string; i: number; kind: Parameters<typeof u.f>[0] }) => { const [lo, hi] = ext(i); return <Row k={k} v={`${u.f(kind, lo)} / ${u.f(kind, hi)}`} unit={u.u(kind)} />; };
+  return (
+    <>
+      <Section title={`Shell FEM results (${loadSel})`} tag={<Calc />}>
+        <Row k="Mesh" v={`${info.quads.length} elements, ${info.nodes.length} nodes`} />
+        <Row k="Max |u|" v={u.f("disp", umax)} unit={u.u("disp")} />
+        {info.kind === "slab" && <Row k="Min uz (deflection)" v={u.f("disp", uz)} unit={u.u("disp")} />}
+        <R k="mx min / max" i={3} kind="momentPerLen" />
+        <R k="my min / max" i={4} kind="momentPerLen" />
+        <R k="mxy min / max" i={5} kind="momentPerLen" />
+        <R k="nx min / max" i={0} kind="forcePerLen" />
+        <R k="ny min / max" i={1} kind="forcePerLen" />
+        <R k="vx min / max" i={6} kind="forcePerLen" />
+        <R k="vy min / max" i={7} kind="forcePerLen" />
+        <Row k="σv max (top/bottom)" v={u.f("stress", vm / 1000)} unit={u.u("stress")} />
+        <div className="text-[10px] text-ink-400 mt-1 leading-snug">Per unit width, local axes x = [{ax(0)}], y = [{ax(1)}], z = [{ax(2)}]. m positive = tension at the −z face (sagging for a slab). Nodal-averaged values; peaks at re-entrant corners and point supports are mesh-dependent. No design check is made.</div>
+      </Section>
+      {transfers.length > 0 && <Section title="Load delivered to members along their length" tag={<Calc />}>
+        {transfers.slice(0, 12).map(([eid, f]) => <Row key={eid} k={eid} v={u.f("force", -f![2])} unit={`${u.u("force")} ↓`} />)}
+        <Row k="Total along members" v={u.f("force", -tot)} unit={u.u("force")} />
+        <div className="text-[10px] text-ink-400 mt-1 leading-snug">Vertical component of the shell nodal forces at the mesh nodes along each member. The rest goes directly into the panel corners, where beams and columns meet.</div>
+      </Section>}
+    </>
   );
 }
 

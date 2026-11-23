@@ -1,12 +1,15 @@
-import { BANDS, cssColorAt, normalize, valueAt } from "../lib/colormap";
+import { BANDS, cssColorAt, normalize, valueAt, type Scale } from "../lib/colormap";
+import { SHELL_COMPS, SHELL_LABEL, type ShellComp } from "../lib/shells";
 import { COMP_LABEL, fmt, type Display } from "../lib/display";
 import type { FlowData, PathDir } from "../lib/loadpath";
 import type { ForceComp } from "../lib/types";
 import { useStore, useU } from "../store";
 
 /** Dynamic legend ("control panel") with value bands and share of members in each band. */
-export function Legend({ display, flows }: { display: Display; flows: FlowData | null }) {
-  const { mode, forceComp, set, deformScale, pathDir, colorTransform } = useStore();
+export function Legend({ display, flows, shellScale }: { display: Display; flows: FlowData | null; shellScale?: Scale | null }) {
+  const { mode, forceComp, set, deformScale, pathDir, colorTransform, animate } = useStore();
+  const shellSlabs = useStore((s) => s.results?.slab_model === "shell");
+  const hasMesh = useStore((s) => !!s.results?.mesh);
   const { scale, values } = display;
   const u = useU();
   const show = (v: number) => (scale.kind ? u.f(scale.kind, v) : fmt(v, scale.max < 10 ? 2 : 0));
@@ -40,6 +43,7 @@ export function Legend({ display, flows }: { display: Display; flows: FlowData |
         <div className="mt-2">
           <div className="flex justify-between text-ink-400"><span>Scale</span><span className="num">×{deformScale}</span></div>
           <input type="range" min={1} max={500} value={deformScale} onChange={(e) => set({ deformScale: +e.target.value })} className="w-full accent-sky-400" />
+          <button className={`mt-1 w-full rounded px-1 py-0.5 ${animate ? "bg-accent/20 text-accent" : "bg-ink-800 text-ink-300"}`} onClick={() => set({ animate: !animate })}>{animate ? "❚❚ Pause animation" : "▶ Animate deformation"}</button>
         </div>
       )}
       {mode === "loadpath" && flows && (
@@ -79,8 +83,12 @@ export function Legend({ display, flows }: { display: Display; flows: FlowData |
         </div>
       )}
       {mode === "reactions" && <ReactionLegend />}
+      {mode === "stress" && shellScale && <ShellSection scale={shellScale} />}
+      {mode === "deformation" && hasMesh && <div className="mt-1 text-[10px] text-ink-400">Slabs and walls use the same |u| scale (shell FEM nodal displacements).</div>}
       {scale.note && <div className="mt-2 text-[10px] leading-snug text-ink-400">{scale.note}</div>}
-      {mode === "loadpath" && <div className="mt-1 text-[10px] leading-snug text-ink-400">Particles move in the direction the load travels; density ∝ magnitude. Arrows on slabs show the assumed tributary transfer.</div>}
+      {mode === "loadpath" && <div className="mt-1 text-[10px] leading-snug text-ink-400">Particles move in the direction the load travels; density ∝ magnitude. {shellSlabs
+        ? "Arrows in slabs and walls show the load flux along d from the shell forces (FEM): φ = −(traction on a cut)·d, colour ∝ |φ| (kN/m)."
+        : "Arrows on slabs show the assumed tributary transfer."}{hasMesh && !shellSlabs ? " Arrows in walls: shell FEM load flux." : ""}</div>}
     </div>
   );
 }
@@ -94,6 +102,33 @@ function ReactionLegend() {
       <div className="h-3 rounded" style={{ background: `linear-gradient(90deg, ${[0, 0.25, 0.5, 0.75, 1].map((t) => cssColorAt(t)).join(",")})` }} />
       <div className="flex justify-between num text-ink-400"><span>0</span><span>q_allow = {u.w("soil", qa, 0)}</span></div>
       <div className="text-[10px] text-ink-400 leading-snug">Footing colour = q_max / q_allow (user input). Surfaces below footings show the linear contact pressure of a rigid footing, full contact assumed. Magenta = uplift (assumption invalid). Not a geotechnical design check.</div>
+    </div>
+  );
+}
+
+function ShellSection({ scale }: { scale: Scale }) {
+  const u = useU();
+  const { shellComp, set } = useStore();
+  const k = scale.kind!;
+  const ticks = [1, 0.75, 0.5, 0.25, 0];
+  return (
+    <div className="mt-3 border-t border-ink-700 pt-2">
+      <div className="flex items-center justify-between"><div className="panel-title">Slabs & walls</div><span className="tag bg-emerald-500/15 text-emerald-300">SHELL FEM</span></div>
+      <div className="mt-1 grid grid-cols-3 gap-0.5">
+        {SHELL_COMPS.map((c) => (
+          <button key={c} title={SHELL_LABEL[c]} onClick={() => set({ shellComp: c as ShellComp })}
+            className={`rounded px-1 py-0.5 font-mono ${shellComp === c ? "bg-accent text-ink-950" : "bg-ink-800 text-ink-300 hover:bg-ink-700"}`}>{c === "vm" ? "σv" : c.toLowerCase()}</button>
+        ))}
+      </div>
+      <div className="mt-1 font-semibold text-ink-200">{scale.label}</div>
+      <div className="text-ink-400">[{u.u(k)}]</div>
+      <div className="mt-1 flex gap-1.5">
+        <div className="w-4 h-28 rounded-sm" style={{ background: `linear-gradient(0deg, ${Array.from({ length: 11 }, (_, i) => cssColorAt(i / 10)).join(",")})` }} />
+        <div className="flex flex-col justify-between h-28 num text-ink-300">
+          {ticks.map((t) => <span key={t}>{u.f(k, scale.min + t * (scale.max - scale.min))}</span>)}
+        </div>
+      </div>
+      <div className="mt-1 text-[10px] leading-snug text-ink-400">{scale.signed ? "Signed: blue = negative, red = positive. " : ""}Moments: + = tension at the panel's −z face (slab bottom). Elastic surface stresses, no cracking, no design check.</div>
     </div>
   );
 }

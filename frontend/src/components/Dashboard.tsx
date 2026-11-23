@@ -57,12 +57,16 @@ export function Dashboard() {
       const s = cols.reduce((acc, e) => acc + -(res.elements[e.id]?.N[0] ?? 0), 0);
       return { label: `Storey ${lv}`, value: s };
     });
-    const reactions = Object.entries(res.reactions).map(([n, r]) => ({ label: `${n} ${model.nodes.find((x) => x.id === n)?.grid ?? ""}`, value: r[2] }));
+    const reactions = Object.entries(res.reactions).map(([n, r]) => ({ label: `${n} ${model.nodes.find((x) => x.id === n)?.grid ?? (results.mesh?.nodes[n] ? "wall base" : "")}`, value: r[2] }));
     const sumR = Object.values(res.reactions).reduce((s, r) => s + r[2], 0);
-    const slabSW = model.slabs.reduce((s, sl) => {
-      const t = results.tributary[sl.id];
-      return s + (t ? t.area * sl.thickness * (sl.density ?? 25) : 0);
-    }, 0);
+    const quadArea = (ids: string[]) => {
+      const p = ids.map((id) => model.nodes.find((n) => n.id === id)!).filter(Boolean);
+      if (p.length !== 4) return 0;
+      const a = [p[2].x - p[0].x, p[2].y - p[0].y, p[2].z - p[0].z], b = [p[3].x - p[1].x, p[3].y - p[1].y, p[3].z - p[1].z];
+      return 0.5 * Math.hypot(a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]);
+    };
+    const slabSW = model.slabs.reduce((s, sl) => s + quadArea(sl.corners) * sl.thickness * (sl.density ?? 25), 0)
+      + (model.walls ?? []).reduce((s, w) => s + quadArea(w.corners) * w.thickness * (w.density ?? 25), 0);
     const frameSW = Object.entries(results.elements).reduce((s, [, i]) => s + i.props.A * (model.materials[i.material]?.density ?? 0) * i.L, 0);
     const eq = [...model.load_cases.map((c) => ({ id: c.id, eq: results.cases[c.id]?.equilibrium })),
       ...model.combinations.map((c) => ({ id: c.id, eq: combinedResult(model, results, c.id)?.equilibrium }))];
@@ -83,10 +87,10 @@ export function Dashboard() {
         <span className="tag bg-amber-500/15 text-amber-300">No design code checks implemented — no safety or compliance claim</span>
       </div>
       <div className="grid grid-cols-5 gap-3">
-        <Card title="Total dead load (DL)" value={u.f("force", data.caseTotal("DL"), 0)} unit={u.u("force")} sub="Members + slab self-weight" />
+        <Card title="Total dead load (DL)" value={u.f("force", data.caseTotal("DL"), 0)} unit={u.u("force")} sub={model.walls?.length ? "Members + slab + wall self-weight" : "Members + slab self-weight"} />
         <Card title="Superimposed dead (SDL)" value={u.f("force", data.caseTotal("SDL"), 0)} unit={u.u("force")} />
         <Card title="Total live load (LL)" value={u.f("force", data.caseTotal("LL"), 0)} unit={u.u("force")} />
-        <Card title="Structural weight" value={u.f("force", data.frameSW + data.slabSW, 0)} unit={u.u("force")} sub={`Frame ${u.w("force", data.frameSW, 0)} + slabs ${u.w("force", data.slabSW, 0)} (footings excl.)`} />
+        <Card title="Structural weight" value={u.f("force", data.frameSW + data.slabSW, 0)} unit={u.u("force")} sub={`Frame ${u.w("force", data.frameSW, 0)} + ${model.walls?.length ? "slabs & walls" : "slabs"} ${u.w("force", data.slabSW, 0)} (footings excl.)`} />
         <Card title={`Σ support reactions Rz (${loadSel})`} value={u.f("force", data.sumR, 0)} unit={u.u("force")} sub={`Σ applied Fz ${u.w("force", data.res.equilibrium.applied[2], 1)}`} />
         <Card title="Max displacement" value={u.f("disp", data.maxU.v)} unit={u.u("disp")} sub={<>at node {data.maxU.n}</>} />
         <Card title="Max bending moment" value={u.f("moment", Math.abs(data.M.v))} unit={u.u("moment")} sub={<button className="text-accent" onClick={() => goto(data.M.id)}>{data.M.id}</button>} />
@@ -96,7 +100,7 @@ export function Dashboard() {
       </div>
       <div className="grid grid-cols-3 gap-3 mt-3">
         <div className="rounded-lg border border-ink-700 bg-ink-850 p-3">
-          <div className="panel-title mb-2">Load accumulation — Σ column axial per storey</div>
+          <div className="panel-title mb-2">Load accumulation — Σ column axial per storey{model.walls?.length ? " (columns only; walls carry the rest)" : ""}</div>
           <HBar rows={data.storey} kind="force" />
           <div className="text-[10px] text-ink-400 mt-2">Compression at the bottom of each storey's columns. The roof-to-foundation build-up of the vertical load path.</div>
         </div>

@@ -1,10 +1,11 @@
 import { create } from "zustand";
 import { api } from "./lib/api";
 import type { PathDir, TraceResult } from "./lib/loadpath";
+import type { ShellComp } from "./lib/shells";
 import type { ForceComp, Load, Mode, Model, Results } from "./lib/types";
 import { U, type UnitSystem } from "./lib/units";
 
-export type Selection = { kind: "element" | "node" | "slab"; id: string } | null;
+export type Selection = { kind: "element" | "node" | "slab" | "wall"; id: string } | null;
 
 interface State {
   model: Model | null;
@@ -19,6 +20,7 @@ interface State {
   selection: Selection;
   multi: string[];              // multi-selected element ids
   forceComp: ForceComp;
+  shellComp: ShellComp;
   deformScale: number;
   animate: boolean;
   showLabels: boolean;
@@ -49,7 +51,7 @@ const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
 export const useStore = create<State>((set, get) => ({
   model: null, results: null, resultsStale: false, busy: false, error: null, backendOk: null,
   mode: "model", view: "3d", loadSel: "DL", selection: null, multi: [],
-  forceComp: "My", deformScale: 50, animate: true, showLabels: false, showSlabs: true,
+  forceComp: "My", shellComp: "vm", deformScale: 50, animate: true, showLabels: false, showSlabs: true,
   hiddenTypes: {}, maxLevel: null, exploded: 0, ortho: false, pathDir: "auto", trace: null, isolated: null,
   bottomTab: "log", log: [], history: [], colorTransform: "sqrt", units: (() => { try { return (localStorage.getItem("units") as UnitSystem) || "SI"; } catch { return "SI"; } })(),
   set: (p) => set(p),
@@ -71,7 +73,7 @@ export const useStore = create<State>((set, get) => ({
     try {
       const m = await api.generate(params);
       set({ model: m, results: null, resultsStale: false, selection: null, trace: null, isolated: null, mode: "model", history: [],
-        log: [...get().log, `Generated building: ${m.elements.length} members, ${m.slabs.length} slab panels, ${m.supports.length} supports.`] });
+        log: [...get().log, `Generated building: ${m.elements.length} members, ${m.slabs.length} slab panels, ${m.walls?.length ?? 0} walls, ${m.supports.length} supports.`] });
     } catch (e) {
       set({ error: String((e as Error).message) });
     } finally {
