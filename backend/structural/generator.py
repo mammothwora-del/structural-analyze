@@ -40,6 +40,18 @@ DEFAULTS = {
 }
 
 COMBOS = {
+    # Thai practice, strength design (EIT 1008-38 / Ministerial Regulation load factors based on ACI 318-95):
+    # U = 1.4D + 1.7L ; U = 0.75(1.4D + 1.7L + 1.7W) ; U = 0.9D + 1.3W.
+    # Seismic (DPT 1301/1302-61 style, strength-level E): 1.2D + 1.0L + 1.0E ; 0.9D + 1.0E
+    # (the vertical term 0.2 S_DS D is not included). Verify against the edition in force for the project.
+    "TH": [
+        ("TH1", "1.4D + 1.7L", {"DL": 1.4, "SDL": 1.4, "LL": 1.7}),
+        ("TH2", "0.75(1.4D + 1.7L + 1.7W)", {"DL": 1.05, "SDL": 1.05, "LL": 1.275, "WX": 1.275}),
+        ("TH3", "0.9D + 1.3W", {"DL": 0.9, "SDL": 0.9, "WX": 1.3}),
+        ("TH4", "1.2D + 1.0L + 1.0E (DPT 1301/1302)", {"DL": 1.2, "SDL": 1.2, "LL": 1.0, "EX": 1.0}),
+        ("TH5", "0.9D + 1.0E (DPT 1301/1302)", {"DL": 0.9, "SDL": 0.9, "EX": 1.0}),
+        ("THS", "D + L (service)", {"DL": 1.0, "SDL": 1.0, "LL": 1.0}),
+    ],
     "EN1990": [
         ("ULS1", "1.35G", {"DL": 1.35, "SDL": 1.35}),
         ("ULS2", "1.35G + 1.5Q", {"DL": 1.35, "SDL": 1.35, "LL": 1.5}),
@@ -172,6 +184,8 @@ def generate_building(params: dict | None = None) -> dict:
                 corners = [node_at[(round(a, 6), round(c, 6), lv)], node_at[(round(b, 6), round(c, 6), lv)],
                            node_at[(round(b, 6), round(d, 6), lv)], node_at[(round(a, 6), round(d, 6), lv)]]
                 slabs.append({"id": f"S{len(slabs) + 1}", "corners": corners, "thickness": p["slab_thickness"],
+                              "density": MATERIALS.get(p["column"].get("material", ""), {}).get("density", 25.0),
+                              "material": p["column"].get("material", "C30/37"),
                               "span_type": p["slab_span_type"], "level": lv,
                               "label": f"Slab L{lv} x[{a:g},{b:g}] y[{c:g},{d:g}]"})
 
@@ -226,6 +240,7 @@ def generate_building(params: dict | None = None) -> dict:
         "units": {"force": "kN", "length": "m"},
         "settings": {"standard": p["standard"], "allowable_bearing": p["allowable_bearing"],
                      "stress_limit_concrete": 0.6 * MATERIALS.get(p["column"].get("material", "C30/37"), {}).get("fck", 30) * 1000,
+                     "slab_model": p.get("slab_model", "tributary"),
                      "stress_limit_steel": 355000.0},
         "grid": {"x": [{"name": n, "pos": v} for n, v in zip(xg, xs)],
                  "y": [{"name": n, "pos": v} for n, v in zip(yg, ys)],
@@ -257,12 +272,12 @@ def _level_weights(p, xs, ys, zs, sections, elements, slabs, nodes):
     W = [0.0] * (nlev + 1)
     area = (xs[-1]) * (ys[-1])
     for lv in range(1, nlev + 1):
-        W[lv] += area * (p["slab_thickness"] * 25.0 + p["sdl"])
+        W[lv] += area * (p["slab_thickness"] * MATERIALS.get(p["column"].get("material", ""), {}).get("density", 25.0) + p["sdl"])
     zlev = {n["id"]: n["level"] for n in nodes}
     xyz = {n["id"]: (n["x"], n["y"], n["z"]) for n in nodes}
     for e in elements:
         s = sections[e["section"]]
-        w = section_properties(s).A * MATERIALS[s["material"]]["density"]
+        w = section_properties(s).A * MATERIALS.get(s["material"], {"density": 25.0})["density"]
         a, b = xyz[e["i"]], xyz[e["j"]]
         L = sum((u - v) ** 2 for u, v in zip(a, b)) ** 0.5
         if e["type"] == "column":

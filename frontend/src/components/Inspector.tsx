@@ -4,7 +4,9 @@ import { COMP_LABEL, fmt, stressLimit, UNITS } from "../lib/display";
 import { footingPressure } from "../lib/footing";
 import { computeFlows, elementTransfers, trace } from "../lib/loadpath";
 import type { ForceComp, Load, Model, Results, Stations } from "../lib/types";
-import { useStore } from "../store";
+import { useStore, useU } from "../store";
+import type { UnitsApi } from "../lib/units";
+import { COMP_KIND } from "../lib/display";
 
 const Row = ({ k, v, unit }: { k: React.ReactNode; v: React.ReactNode; unit?: string }) => (
   <div className="flex justify-between gap-2 py-0.5 border-b border-ink-800/80">
@@ -48,7 +50,7 @@ function EmptyPanel() {
 
 function maxAbs(a: number[]) { let m = 0, k = 0; a.forEach((v, i) => { if (Math.abs(v) > Math.abs(m)) { m = v; k = i; } }); return { v: m, k }; }
 
-function MiniDiagram({ st, comp }: { st: Stations; comp: ForceComp }) {
+function MiniDiagram({ st, comp, u }: { st: Stations; comp: ForceComp; u: UnitsApi }) {
   const W = 300, H = 90, pad = 8;
   const L = st.x[st.x.length - 1];
   const vals = st[comp];
@@ -61,7 +63,7 @@ function MiniDiagram({ st, comp }: { st: Stations; comp: ForceComp }) {
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full rounded bg-ink-950 border border-ink-800">
       <line x1={pad} x2={W - pad} y1={H / 2} y2={H / 2} stroke="#33445a" />
       <path d={path} fill="rgba(63,182,255,0.25)" stroke="#3fb6ff" strokeWidth={1.4} />
-      <text x={X(st.x[ext.k])} y={Y(ext.v) + (ext.v >= 0 ? -3 : 11)} fill="#d3dce6" fontSize={10} textAnchor="middle" fontFamily="JetBrains Mono">{fmt(ext.v, 1)}</text>
+      <text x={X(st.x[ext.k])} y={Y(ext.v) + (ext.v >= 0 ? -3 : 11)} fill="#d3dce6" fontSize={10} textAnchor="middle" fontFamily="JetBrains Mono">{u.f(COMP_KIND[comp], ext.v)}</text>
       <text x={pad} y={H - 2} fill="#7f93ab" fontSize={9}>i</text>
       <text x={W - pad - 4} y={H - 2} fill="#7f93ab" fontSize={9}>j</text>
     </svg>
@@ -69,6 +71,7 @@ function MiniDiagram({ st, comp }: { st: Stations; comp: ForceComp }) {
 }
 
 function ElementPanel({ model, results, id }: { model: Model; results: Results | null; id: string }) {
+  const u = useU();
   const { loadSel, set, editModel, pathDir } = useStore();
   const [comp, setComp] = useState<ForceComp>("My");
   const el = model.elements.find((e) => e.id === id);
@@ -113,11 +116,11 @@ function ElementPanel({ model, results, id }: { model: Model; results: Results |
         </div>
         <Row k="Nodes" v={`${el.i} → ${el.j}`} />
         {info && <>
-          <Row k="Length" v={fmt(info.L, 3)} unit="m" />
-          <Row k="b × h" v={`${fmt(info.props.b * 1000, 0)} × ${fmt(info.props.h * 1000, 0)}`} unit="mm" />
-          <Row k="A" v={fmt(info.props.A * 1e4, 1)} unit="cm²" />
-          <Row k="Iy (major) / Iz" v={`${fmt(info.props.Iy * 1e8, 0)} / ${fmt(info.props.Iz * 1e8, 0)}`} unit="cm⁴" />
-          <Row k="E" v={fmt(info.E / 1000, 0)} unit="MPa" />
+          <Row k="Length" v={u.f("length", info.L, 3)} unit={u.u("length")} />
+          <Row k="b × h" v={`${u.f("dim", info.props.b, 1)} × ${u.f("dim", info.props.h, 1)}`} unit={u.u("dim")} />
+          <Row k="A" v={u.f("area", info.props.A, 1)} unit={u.u("area")} />
+          <Row k="Iy (major) / Iz" v={`${u.f("inertia", info.props.Iy, 0)} / ${u.f("inertia", info.props.Iz, 0)}`} unit={u.u("inertia")} />
+          <Row k="E" v={u.f("modulus", info.E / 1000, 0)} unit={u.u("modulus")} />
         </>}
         <Row k="Supports at ends" v={supports.length ? supports.map((s) => `${s!.node} (${s!.type})`).join(", ") : "none"} />
       </Section>
@@ -127,8 +130,8 @@ function ElementPanel({ model, results, id }: { model: Model; results: Results |
       {results && st && info && (
         <>
           <Section title={`Applied loads (${loadSel})`}>
-            {sw && <Row k={`Self-weight (${sw.id} × ${factors[sw.id]})`} v={fmt(-info.props.A * model.materials[info.material].density * info.L * factors[sw.id], 2)} unit="kN" />}
-            {Object.entries(bySource).map(([k, v]) => <Row key={k} k={k} v={fmt(v, 2)} unit="kN" />)}
+            {sw && <Row k={`Self-weight (${sw.id} × ${factors[sw.id]})`} v={u.f("force", -info.props.A * model.materials[info.material].density * info.L * factors[sw.id])} unit={u.u("force")} />}
+            {Object.entries(bySource).map(([k, v]) => <Row key={k} k={k} v={u.f("force", v)} unit={u.u("force")} />)}
             {!sw && !Object.keys(bySource).length && <div className="text-ink-400 text-xs">No member loads in this case.</div>}
           </Section>
 
@@ -138,35 +141,35 @@ function ElementPanel({ model, results, id }: { model: Model; results: Results |
                 <button key={c} onClick={() => setComp(c)} className={`rounded px-1 py-0.5 text-[11px] font-mono ${comp === c ? "bg-accent text-ink-950" : "bg-ink-800 text-ink-300"}`}>{c}</button>
               ))}
             </div>
-            <MiniDiagram st={st} comp={comp} />
-            <div className="text-[10px] text-ink-400 mt-0.5">{COMP_LABEL[comp]} [{UNITS[comp]}] along member, i → j</div>
+            <MiniDiagram st={st} comp={comp} u={u} />
+            <div className="text-[10px] text-ink-400 mt-0.5">{COMP_LABEL[comp]} [{u.u(COMP_KIND[comp])}] along member, i → j</div>
             {(["N", "Vy", "Vz", "T", "My", "Mz"] as ForceComp[]).map((c) => {
               const m = maxAbs(st[c]);
-              return <Row key={c} k={`${c} max |·| (at x=${fmt(st.x[m.k], 2)} m)`} v={fmt(m.v, 2)} unit={UNITS[c]} />;
+              return <Row key={c} k={`${c} max |·| (at x=${u.f("length", st.x[m.k], 2)} ${u.u("length")})`} v={u.f(COMP_KIND[c], m.v)} unit={u.u(COMP_KIND[c])} />;
             })}
           </Section>
 
           <Section title="Stress & displacement" tag={<Calc />}>
-            <Row k="σ max (tension +)" v={fmt(Math.max(...st.sigma_max) / 1000, 2)} unit="MPa" />
-            <Row k="σ min" v={fmt(Math.min(...st.sigma_min) / 1000, 2)} unit="MPa" />
+            <Row k="σ max (tension +)" v={u.f("stress", Math.max(...st.sigma_max) / 1000)} unit={u.u("stress")} />
+            <Row k="σ min" v={u.f("stress", Math.min(...st.sigma_min) / 1000)} unit={u.u("stress")} />
             <Row k="|σ| / user limit" v={fmt(Math.max(...st.sigma_max.map(Math.abs), ...st.sigma_min.map(Math.abs)) / lim, 3)} />
-            <Row k="Max displacement |u|" v={fmt(Math.max(...st.disp.map((d) => Math.hypot(d[0], d[1], d[2]))) * 1000, 2)} unit="mm" />
+            <Row k="Max displacement |u|" v={u.f("disp", Math.max(...st.disp.map((d) => Math.hypot(d[0], d[1], d[2]))))} unit={u.u("disp")} />
             <Row k="Design utilisation" v={<span className="text-amber-300">not implemented</span>} />
           </Section>
 
           {flows && tr && (
             <Section title="Load transfer along d" tag={<Calc />}>
-              <Row k="Load carried (max |flow|)" v={fmt(flows.through[id], 2)} unit="kN" />
-              <Row k="Applied directly on member" v={fmt(tr.memberLoad, 2)} unit="kN" />
-              <Row k={`End i (${el.i}) ${flows.ti[id] >= 0 ? "delivers" : "receives"}`} v={fmt(Math.abs(flows.ti[id]), 2)} unit="kN" />
-              <Row k={`End j (${el.j}) ${flows.tj[id] >= 0 ? "delivers" : "receives"}`} v={fmt(Math.abs(flows.tj[id]), 2)} unit="kN" />
+              <Row k="Load carried (max |flow|)" v={u.f("force", flows.through[id])} unit={u.u("force")} />
+              <Row k="Applied directly on member" v={u.f("force", tr.memberLoad)} unit={u.u("force")} />
+              <Row k={`End i (${el.i}) ${flows.ti[id] >= 0 ? "delivers" : "receives"}`} v={u.f("force", Math.abs(flows.ti[id]))} unit={u.u("force")} />
+              <Row k={`End j (${el.j}) ${flows.tj[id] >= 0 ? "delivers" : "receives"}`} v={u.f("force", Math.abs(flows.tj[id]))} unit={u.u("force")} />
               <div className="mt-2 text-ink-300 text-xs font-medium">Incoming <Assumed t="PROPORTIONAL SHARE" /></div>
               {tr.incoming.length ? tr.incoming.sort((a, b) => b.value - a.value).slice(0, 8).map((x, k) => (
-                <Row key={k} k={<button className="text-accent hover:underline" onClick={() => x.kind === "element" && set({ selection: { kind: "element", id: x.from } })}>{x.from}</button>} v={`${fmt(x.value, 2)} via ${x.via}`} unit="kN" />
+                <Row key={k} k={<button className="text-accent hover:underline" onClick={() => x.kind === "element" && set({ selection: { kind: "element", id: x.from } })}>{x.from}</button>} v={`${u.f("force", x.value)} via ${x.via}`} unit={u.u("force")} />
               )) : <div className="text-ink-400 text-xs">{tr.memberLoad > 0 ? "Load is applied directly on this member (see above)." : "—"}</div>}
               <div className="mt-2 text-ink-300 text-xs font-medium">Outgoing</div>
               {tr.outgoing.length ? tr.outgoing.sort((a, b) => b.value - a.value).slice(0, 8).map((x, k) => (
-                <Row key={k} k={<button className="text-accent hover:underline" onClick={() => x.kind === "element" && set({ selection: { kind: "element", id: x.to } })}>{x.to.replace("support@", "Support ")}</button>} v={`${fmt(x.value, 2)} via ${x.via}`} unit="kN" />
+                <Row key={k} k={<button className="text-accent hover:underline" onClick={() => x.kind === "element" && set({ selection: { kind: "element", id: x.to } })}>{x.to.replace("support@", "Support ")}</button>} v={`${u.f("force", x.value)} via ${x.via}`} unit={u.u("force")} />
               )) : <div className="text-ink-400 text-xs">—</div>}
               <div className="mt-2 flex gap-1.5">
                 <button className="btn" onClick={() => set({ trace: trace(model, flows, id, "down"), mode: "loadpath" })}>Trace down ↓</button>
@@ -181,7 +184,7 @@ function ElementPanel({ model, results, id }: { model: Model; results: Results |
               <thead><tr className="text-ink-400"><td></td>{["Fx", "Fy", "Fz", "Mx", "My", "Mz"].map((h) => <td key={h} className="text-right">{h}</td>)}</tr></thead>
               <tbody>
                 {[["i", st.end_i], ["j", st.end_j]].map(([n, v]) => (
-                  <tr key={n as string}><td className="text-ink-400">{n as string}</td>{(v as number[]).map((x, k) => <td key={k} className="text-right">{fmt(x, 1)}</td>)}</tr>
+                  <tr key={n as string}><td className="text-ink-400">{n as string}</td>{(v as number[]).map((x, k) => <td key={k} className="text-right">{u.f(k < 3 ? "force" : "moment", x)}</td>)}</tr>
                 ))}
               </tbody>
             </table>
@@ -204,6 +207,7 @@ function ElementPanel({ model, results, id }: { model: Model; results: Results |
 }
 
 function AddMemberLoad({ ids }: { ids: string[] }) {
+  const u = useU();
   const { model, addLoad, editModel } = useStore();
   const [c, setC] = useState(model!.load_cases.find((x) => !x.self_weight)?.id ?? model!.load_cases[0].id);
   const [w, setW] = useState(10);
@@ -220,16 +224,18 @@ function AddMemberLoad({ ids }: { ids: string[] }) {
       </div>
       <button className="btn mt-1" onClick={() => editModel((m) => {
         for (const id of ids) {
-          if (kind === "dist") m.loads.push({ case: c, kind: "dist", element: id, direction: dv[dir], points: [[0, w], [1, w]], label: `UDL ${w} kN/m`, relative: true });
-          else m.loads.push({ case: c, kind: "point", element: id, direction: dv[dir], a: 0.5, P: w, label: `Point ${w} kN`, relative: true });
+          const ws = u.si(kind === "dist" ? "lineLoad" : "force", w);
+          if (kind === "dist") m.loads.push({ case: c, kind: "dist", element: id, direction: dv[dir], points: [[0, ws], [1, ws]], label: `UDL ${w} ${u.u("lineLoad")}`, relative: true });
+          else m.loads.push({ case: c, kind: "point", element: id, direction: dv[dir], a: 0.5, P: ws, label: `Point ${w} ${u.u("force")}`, relative: true });
         }
-      })}>Add {kind === "dist" ? `${w} kN/m` : `${w} kN`}</button>
+      })}>Add {kind === "dist" ? `${w} ${u.u("lineLoad")}` : `${w} ${u.u("force")}`}</button>
       <span className="hidden">{String(!!addLoad)}</span>
     </Section>
   );
 }
 
 function NodePanel({ model, results, id }: { model: Model; results: Results | null; id: string }) {
+  const u = useU();
   const { loadSel, editModel, multi, set } = useStore();
   const n = model.nodes.find((x) => x.id === id)!;
   const sup = model.supports.find((s) => s.node === id);
@@ -245,7 +251,7 @@ function NodePanel({ model, results, id }: { model: Model; results: Results | nu
       <div className="text-lg font-semibold">Node {id}</div>
       <div className="text-ink-400 text-xs">{n.grid ? `Grid ${n.grid}` : ""} {n.level !== undefined ? `· Level ${n.level}` : ""}</div>
       <Section title="Coordinates">
-        <Row k="X, Y, Z" v={`${fmt(n.x, 3)}, ${fmt(n.y, 3)}, ${fmt(n.z, 3)}`} unit="m" />
+        <Row k="X, Y, Z" v={`${u.f("length", n.x, 3)}, ${u.f("length", n.y, 3)}, ${u.f("length", n.z, 3)}`} unit={u.u("length")} />
         <div className="flex justify-between py-0.5 border-b border-ink-800/80"><span className="text-ink-400">Support</span>
           <select className="input !w-32" value={sup?.type ?? "none"} onChange={(e) => editModel((m) => {
             const v = e.target.value;
@@ -259,17 +265,17 @@ function NodePanel({ model, results, id }: { model: Model; results: Results | nu
         </div>
       </Section>
       {d && <Section title="Displacement" tag={<Calc />}>
-        {["ux", "uy", "uz"].map((k, i) => <Row key={k} k={k} v={fmt(d[i] * 1000, 3)} unit="mm" />)}
+        {["ux", "uy", "uz"].map((k, i) => <Row key={k} k={k} v={u.f("disp", d[i], 3)} unit={u.u("disp")} />)}
         {["rx", "ry", "rz"].map((k, i) => <Row key={k} k={k} v={fmt(d[i + 3] * 1000, 4)} unit="mrad" />)}
       </Section>}
       {r && <Section title="Support reaction" tag={<Calc />}>
-        {["Rx", "Ry", "Rz"].map((k, i) => <Row key={k} k={k} v={fmt(r[i], 2)} unit="kN" />)}
-        {["Mx", "My", "Mz"].map((k, i) => <Row key={k} k={k} v={fmt(r[i + 3], 2)} unit="kN·m" />)}
+        {["Rx", "Ry", "Rz"].map((k, i) => <Row key={k} k={k} v={u.f("force", r[i])} unit={u.u("force")} />)}
+        {["Mx", "My", "Mz"].map((k, i) => <Row key={k} k={k} v={u.f("moment", r[i + 3])} unit={u.u("moment")} />)}
       </Section>}
       {fp && sup?.footing && <Section title={`Footing ${sup.footing.B}×${sup.footing.L}×${sup.footing.t} m`} tag={<Assumed t="RIGID FOOTING" />}>
-        <Row k="N on soil (incl. footing wt.)" v={fmt(fp.N, 1)} unit="kN" />
-        <Row k="q max / q min" v={`${fmt(fp.qmax, 1)} / ${fmt(fp.qmin, 1)}`} unit="kN/m²" />
-        <Row k="Eccentricity ex / ey" v={`${fmt(fp.ex * 1000, 0)} / ${fmt(fp.ey * 1000, 0)}`} unit="mm" />
+        <Row k="N on soil (incl. footing wt.)" v={u.f("force", fp.N)} unit={u.u("force")} />
+        <Row k="q max / q min" v={`${u.f("soil", fp.qmax)} / ${u.f("soil", fp.qmin)}`} unit={u.u("soil")} />
+        <Row k="Eccentricity ex / ey" v={`${u.f("dim", fp.ex, 0)} / ${u.f("dim", fp.ey, 0)}`} unit={u.u("dim")} />
         <Row k="q max / q allow (user)" v={fmt(fp.qmax / model.settings.allowable_bearing, 3)} />
         {fp.uplift && <div className="text-xs text-fuchsia-300 mt-1">Uplift: part of the footing loses contact — the linear full-contact formula is not valid.</div>}
       </Section>}
@@ -281,7 +287,7 @@ function NodePanel({ model, results, id }: { model: Model; results: Results | nu
           {["Fx", "Fy", "Fz"].map((k, i) => <input key={k} className="input" type="number" value={F[i]} title={k} onChange={(e) => { const v = [...F]; v[i] = +e.target.value; setF(v); }} />)}
           <select className="input" value={c} onChange={(e) => setC(e.target.value)}>{model.load_cases.map((x) => <option key={x.id}>{x.id}</option>)}</select>
         </div>
-        <button className="btn mt-1" onClick={() => editModel((m) => { m.loads.push({ case: c, kind: "nodal", node: id, values: [...F, 0, 0, 0], label: "User nodal load" }); })}>Add load (kN)</button>
+        <button className="btn mt-1" onClick={() => editModel((m) => { m.loads.push({ case: c, kind: "nodal", node: id, values: [...F.map((v) => u.si("force", v)), 0, 0, 0], label: "User nodal load" }); })}>Add load ({u.u("force")})</button>
       </Section>
       <span className="hidden">{String(!!set)}</span>
     </div>
@@ -289,6 +295,7 @@ function NodePanel({ model, results, id }: { model: Model; results: Results | nu
 }
 
 function SlabPanel({ model, results, id }: { model: Model; results: Results | null; id: string }) {
+  const u = useU();
   const { editModel, loadSel, set } = useStore();
   const s = model.slabs.find((x) => x.id === id)!;
   const t = results?.tributary[id];
@@ -299,7 +306,7 @@ function SlabPanel({ model, results, id }: { model: Model; results: Results | nu
       <div className="text-lg font-semibold">Slab {id}</div>
       <div className="text-ink-400 text-xs">{s.label}</div>
       <Section title="Properties">
-        <Row k="Thickness" v={fmt(s.thickness * 1000, 0)} unit="mm" />
+        <Row k="Thickness" v={u.f("dim", s.thickness, 1)} unit={u.u("dim")} />
         <div className="flex justify-between py-0.5 border-b border-ink-800/80"><span className="text-ink-400">Span type</span>
           <select className="input !w-32" value={s.span_type ?? "auto"} onChange={(e) => editModel((m) => { m.slabs.find((x) => x.id === id)!.span_type = e.target.value; })}>
             <option value="auto">auto (ratio ≤ 2 → two-way)</option><option value="two-way">two-way</option><option value="one-way">one-way</option>
@@ -307,7 +314,7 @@ function SlabPanel({ model, results, id }: { model: Model; results: Results | nu
         </div>
       </Section>
       {t && <Section title="Load distribution to beams" tag={<Assumed t="TRIBUTARY (NOT FEM)" />}>
-        <Row k="Panel" v={`${fmt(t.lx, 2)} × ${fmt(t.ly, 2)} m — ${t.mode}`} />
+        <Row k="Panel" v={`${u.f("length", t.lx, 2)} × ${u.f("length", t.ly, 2)} ${u.u("length")} — ${t.mode}`} />
         {t.edges.map((e) => (
           <Row key={e.edge} k={`Edge ${e.edge + 1} → ${e.segments.map((g) => g.element).join(", ") || "NO BEAM"}`} v={`${(e.fraction * 100).toFixed(1)} %`} />
         ))}
@@ -318,7 +325,7 @@ function SlabPanel({ model, results, id }: { model: Model; results: Results | nu
           <input className="input" type="number" value={q} onChange={(e) => setQ(+e.target.value)} />
           <select className="input" value={c} onChange={(e) => setC(e.target.value)}>{model.load_cases.map((x) => <option key={x.id}>{x.id}</option>)}</select>
         </div>
-        <button className="btn mt-1" onClick={() => editModel((m) => { m.loads.push({ case: c, kind: "area", slab: id, q, label: `Area load ${q} kN/m²` }); })}>Add {q} kN/m² (downward)</button>
+        <button className="btn mt-1" onClick={() => editModel((m) => { m.loads.push({ case: c, kind: "area", slab: id, q: u.si("areaLoad", q), label: `Area load ${q} ${u.u("areaLoad")}` }); })}>Add {q} {u.u("areaLoad")} (downward)</button>
       </Section>
       <span className="hidden">{loadSel}{String(!!set)}</span>
     </div>

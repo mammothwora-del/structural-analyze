@@ -27,6 +27,21 @@ MATERIALS: dict[str, dict] = {
     "A992": {"name": "Steel ASTM A992", "kind": "steel", "E": 200000.0, "nu": 0.3, "density": 77.0, "fy": 345.0},
 }
 
+KSC_TO_MPA = 0.0980665
+
+
+def _thai_concrete(fc_ksc: float) -> dict:
+    """Thai practice (EIT 1008 / ACI 318): Ec = 15100 sqrt(fc') in ksc, fc' = cylinder strength."""
+    E_ksc = 15100.0 * math.sqrt(fc_ksc)
+    return {"name": f"Concrete fc'={fc_ksc:.0f} ksc (TH)", "kind": "concrete", "E": round(E_ksc * KSC_TO_MPA, 1),
+            "nu": 0.2, "density": 23.5, "fck": round(fc_ksc * KSC_TO_MPA, 2), "standard": "TH"}
+
+
+for _fc in (180, 210, 240, 280, 320):
+    MATERIALS[f"TH-fc{_fc}"] = _thai_concrete(_fc)
+MATERIALS["SS400"] = {"name": "Steel SS400 (TIS 1227)", "kind": "steel", "E": 200000.0, "nu": 0.3, "density": 77.0, "fy": 245.0, "standard": "TH"}
+MATERIALS["SM520"] = {"name": "Steel SM520 (TIS 1227)", "kind": "steel", "E": 200000.0, "nu": 0.3, "density": 77.0, "fy": 355.0, "standard": "TH"}
+
 
 @dataclass
 class SectionProps:

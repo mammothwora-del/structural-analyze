@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Section } from "../lib/types";
-import { useStore } from "../store";
+import { useStore, useU } from "../store";
 import { TYPE_COLORS } from "../three/Members";
 
 const list = (s: string) => s.split(/[,\s]+/).filter(Boolean).map(Number).filter((x) => x > 0);
@@ -32,56 +32,116 @@ const F = ({ label, children, hint }: { label: string; children: React.ReactNode
   </label>
 );
 
+const OCCUPANCY: Record<string, { label: string; q: number }[]> = {
+  // Thai Ministerial Regulation No. 6 (B.E. 2527) live loads, kg/m² — verify against the regulation in force.
+  TH: [
+    { label: "Residence / house (150 kg/m²)", q: 150 }, { label: "School, condo, hotel, hospital (200)", q: 200 },
+    { label: "Office, bank (250)", q: 250 }, { label: "Commercial, assembly hall (300)", q: 300 },
+    { label: "Market, dept. store, car park (400)", q: 400 }, { label: "Warehouse, factory, library (500)", q: 500 },
+  ],
+  EN1990: [
+    { label: "Residential, cat. A (1.5 kN/m²)", q: 1.5 / 0.00980665 }, { label: "Office, cat. B (3.0)", q: 3.0 / 0.00980665 },
+    { label: "Assembly, cat. C3 (5.0)", q: 5.0 / 0.00980665 }, { label: "Shopping, cat. D1 (4.0)", q: 4.0 / 0.00980665 },
+  ],
+  ASCE7: [
+    { label: "Residential (40 psf)", q: 40 * 4.88243 }, { label: "Office (50 psf)", q: 50 * 4.88243 },
+    { label: "Corridors above 1st floor (80 psf)", q: 80 * 4.88243 }, { label: "Assembly, movable seats (100 psf)", q: 100 * 4.88243 },
+  ],
+};
+const MATS: Record<string, string[]> = { TH: ["TH-fc240", "TH-fc280", "TH-fc320", "TH-fc210", "TH-fc180"], EN1990: ["C30/37", "C25/30", "C40/50"], ASCE7: ["C30/37", "C25/30", "C40/50"] };
+const KGM2 = 0.00980665; // kN/m² per kg/m²
+
 function Generator() {
   const { generate, busy } = useStore();
+  const u = useU();
+  // state is kept in SI (m, kN/m², kN/m³...) and shown in the selected unit system
   const [p, setP] = useState({
-    x: "6, 6, 6", y: "5, 5", h: "4, 3.5, 3.5, 3.5", colB: 400, colH: 400, mbB: 300, mbH: 600, sbB: 250, sbH: 450,
-    sec: "y", slab: 180, sdl: 1.5, ll: 3.0, rll: 1.0, support: "fixed", fB: 2.0, fT: 0.6, wind: 1.0, cs: 0.08, mat: "C30/37", standard: "EN1990", qa: 250,
+    x: [6, 6, 6], y: [5, 5], h: [4, 3.5, 3.5, 3.5], colB: 0.4, colH: 0.4, mbB: 0.3, mbH: 0.6, sbB: 0.25, sbH: 0.45,
+    sec: "y", slab: 0.18, sdl: 1.5, ll: 3.0, rll: 1.0, support: "fixed", fB: 2.0, fT: 0.6, wind: 1.0, cs: 0.08, mat: "C30/37", standard: "EN1990", qa: 250,
+    slabModel: "tributary", mesh: 1.0,
   });
-  const u = (k: keyof typeof p) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setP({ ...p, [k]: e.target.type === "number" ? +e.target.value : e.target.value });
+  const [lists, setLists] = useState<Record<string, string>>({});
+  const listText = (k: "x" | "y" | "h") => lists[k + u.sys] ?? p[k].map((v) => +u.c("length", v).toFixed(3)).join(", ");
+  const num = (k: keyof typeof p, kind: Parameters<typeof u.c>[0] | null, step?: number) => (
+    <input className="input" type="number" step={step ?? "any"} value={kind ? +u.c(kind, p[k] as number).toFixed(4) : (p[k] as number)}
+      onChange={(e) => setP({ ...p, [k]: kind ? u.si(kind, +e.target.value) : +e.target.value })} />
+  );
+  const setStd = (std: string) => setP({ ...p, standard: std, mat: MATS[std][0], ll: std === "TH" ? 250 * KGM2 : std === "ASCE7" ? 50 * 0.04788 : 3.0, rll: std === "TH" ? 50 * KGM2 : std === "ASCE7" ? 20 * 0.04788 : 1.0, sdl: std === "TH" ? 150 * KGM2 : 1.5 });
   const run = () => generate({
-    x_spans: list(p.x), y_spans: list(p.y), story_heights: list(p.h),
-    column: { shape: "rect", b: p.colB / 1000, h: p.colH / 1000, material: p.mat },
-    main_beam: { shape: "rect", b: p.mbB / 1000, h: p.mbH / 1000, material: p.mat },
-    secondary_beam: { shape: "rect", b: p.sbB / 1000, h: p.sbH / 1000, material: p.mat },
-    secondary_beams: p.sec, slab_thickness: p.slab / 1000, sdl: p.sdl, live_load: p.ll, roof_live_load: p.rll,
+    x_spans: p.x, y_spans: p.y, story_heights: p.h,
+    column: { shape: "rect", b: p.colB, h: p.colH, material: p.mat },
+    main_beam: { shape: "rect", b: p.mbB, h: p.mbH, material: p.mat },
+    secondary_beam: { shape: "rect", b: p.sbB, h: p.sbH, material: p.mat },
+    secondary_beams: p.sec, slab_thickness: p.slab, sdl: p.sdl, live_load: p.ll, roof_live_load: p.rll,
     support: p.support, footing: { B: p.fB, L: p.fB, t: p.fT }, wind_pressure: p.wind, seismic_cs: p.cs, standard: p.standard, allowable_bearing: p.qa,
+    slab_model: p.slabModel, mesh_size: p.mesh,
   });
+  const listInput = (k: "x" | "y" | "h") => (
+    <input className="input" value={listText(k)} onChange={(e) => {
+      setLists({ ...lists, [k + u.sys]: e.target.value });
+      const v = list(e.target.value).map((x) => u.si("length", x));
+      if (v.length) setP({ ...p, [k]: v });
+    }} />
+  );
+  const L = u.u("length"), D = u.u("dim"), A = u.u("areaLoad");
   return (
     <div>
-      <div className="panel-title mb-2">Grid & storeys</div>
-      <F label="X spans (m)" hint="grid 1, 2, 3…"><input className="input" value={p.x} onChange={u("x")} /></F>
-      <F label="Y spans (m)" hint="grid A, B, C…"><input className="input" value={p.y} onChange={u("y")} /></F>
-      <F label="Storey heights (m)" hint="bottom → top"><input className="input" value={p.h} onChange={u("h")} /></F>
-      <div className="panel-title mt-3 mb-2">Members (mm)</div>
-      <F label="Material"><select className="input" value={p.mat} onChange={u("mat")}><option>C25/30</option><option>C30/37</option><option>C40/50</option></select></F>
+      <div className="panel-title mb-2">Design standard</div>
+      <F label="Standard (combinations, presets)">
+        <select className="input" value={p.standard} onChange={(e) => setStd(e.target.value)}>
+          <option value="TH">Thai — EIT 1008 / Ministerial Regulation, DPT 1301/1302</option>
+          <option value="EN1990">Eurocode EN 1990</option>
+          <option value="ASCE7">ASCE 7 LRFD</option>
+        </select>
+      </F>
+      <div className="panel-title mt-3 mb-2">Grid & storeys</div>
+      <F label={`X spans (${L})`} hint="grid 1, 2, 3…">{listInput("x")}</F>
+      <F label={`Y spans (${L})`} hint="grid A, B, C…">{listInput("y")}</F>
+      <F label={`Storey heights (${L})`} hint="bottom → top">{listInput("h")}</F>
+      <div className="panel-title mt-3 mb-2">Members ({D})</div>
+      <F label="Material"><select className="input" value={p.mat} onChange={(e) => setP({ ...p, mat: e.target.value })}>{[...MATS[p.standard], ...Object.values(MATS).flat().filter((m) => !MATS[p.standard].includes(m))].filter((m, i, a) => a.indexOf(m) === i).map((m) => <option key={m} value={m}>{m}</option>)}</select></F>
       <div className="grid grid-cols-2 gap-x-2">
-        <F label="Column b"><input className="input" type="number" value={p.colB} onChange={u("colB")} /></F>
-        <F label="Column h"><input className="input" type="number" value={p.colH} onChange={u("colH")} /></F>
-        <F label="Main beam b"><input className="input" type="number" value={p.mbB} onChange={u("mbB")} /></F>
-        <F label="Main beam h"><input className="input" type="number" value={p.mbH} onChange={u("mbH")} /></F>
-        <F label="Sec. beam b"><input className="input" type="number" value={p.sbB} onChange={u("sbB")} /></F>
-        <F label="Sec. beam h"><input className="input" type="number" value={p.sbH} onChange={u("sbH")} /></F>
+        <F label="Column b">{num("colB", "dim")}</F>
+        <F label="Column h">{num("colH", "dim")}</F>
+        <F label="Main beam b">{num("mbB", "dim")}</F>
+        <F label="Main beam h">{num("mbH", "dim")}</F>
+        <F label="Sec. beam b">{num("sbB", "dim")}</F>
+        <F label="Sec. beam h">{num("sbH", "dim")}</F>
       </div>
-      <F label="Secondary beams"><select className="input" value={p.sec} onChange={u("sec")}><option value="none">none</option><option value="y">run along Y (mid-bay)</option><option value="x">run along X (mid-bay)</option></select></F>
-      <F label="Slab thickness (mm)"><input className="input" type="number" value={p.slab} onChange={u("slab")} /></F>
+      <F label="Secondary beams"><select className="input" value={p.sec} onChange={(e) => setP({ ...p, sec: e.target.value })}><option value="none">none</option><option value="y">run along Y (mid-bay)</option><option value="x">run along X (mid-bay)</option></select></F>
+      <F label={`Slab thickness (${D})`}>{num("slab", "dim")}</F>
+      <F label="Slab analysis">
+        <select className="input" value={p.slabModel} onChange={(e) => setP({ ...p, slabModel: e.target.value })}>
+          <option value="shell">Shell FEM (plate + membrane) — calculated</option>
+          <option value="tributary">Tributary areas (45°) — assumed</option>
+        </select>
+      </F>
+      {p.slabModel === "shell" && <F label={`Shell mesh size (${L})`}>{num("mesh", "length")}</F>}
       <div className="panel-title mt-3 mb-2">Foundations</div>
       <div className="grid grid-cols-2 gap-x-2">
-        <F label="Support"><select className="input" value={p.support} onChange={u("support")}><option value="fixed">fixed</option><option value="pinned">pinned</option></select></F>
-        <F label="q allow (kN/m²)"><input className="input" type="number" value={p.qa} onChange={u("qa")} /></F>
-        <F label="Footing B=L (m)"><input className="input" type="number" step={0.1} value={p.fB} onChange={u("fB")} /></F>
-        <F label="Footing t (m)"><input className="input" type="number" step={0.05} value={p.fT} onChange={u("fT")} /></F>
+        <F label="Support"><select className="input" value={p.support} onChange={(e) => setP({ ...p, support: e.target.value })}><option value="fixed">fixed</option><option value="pinned">pinned</option></select></F>
+        <F label={`q allow (${u.u("soil")})`}>{num("qa", "soil")}</F>
+        <F label={`Footing B=L (${L})`}>{num("fB", "length")}</F>
+        <F label={`Footing t (${L})`}>{num("fT", "length")}</F>
       </div>
-      <div className="panel-title mt-3 mb-2">Loads</div>
+      <div className="panel-title mt-3 mb-2">Loads ({A})</div>
+      <F label="Occupancy preset (live load)">
+        <select className="input" value="" onChange={(e) => e.target.value && setP({ ...p, ll: +e.target.value * KGM2 })}>
+          <option value="">Choose…</option>
+          {OCCUPANCY[p.standard].map((o) => <option key={o.label} value={o.q}>{o.label}</option>)}
+        </select>
+      </F>
       <div className="grid grid-cols-2 gap-x-2">
-        <F label="SDL (kN/m²)"><input className="input" type="number" step={0.1} value={p.sdl} onChange={u("sdl")} /></F>
-        <F label="Live (kN/m²)"><input className="input" type="number" step={0.1} value={p.ll} onChange={u("ll")} /></F>
-        <F label="Roof live"><input className="input" type="number" step={0.1} value={p.rll} onChange={u("rll")} /></F>
-        <F label="Wind net (kN/m²)"><input className="input" type="number" step={0.1} value={p.wind} onChange={u("wind")} /></F>
-        <F label="Seismic Cs"><input className="input" type="number" step={0.01} value={p.cs} onChange={u("cs")} /></F>
-        <F label="Combinations"><select className="input" value={p.standard} onChange={u("standard")}><option value="EN1990">EN 1990</option><option value="ASCE7">ASCE 7 LRFD</option></select></F>
+        <F label="SDL">{num("sdl", "areaLoad")}</F>
+        <F label="Live">{num("ll", "areaLoad")}</F>
+        <F label="Roof live">{num("rll", "areaLoad")}</F>
+        <F label="Wind net">{num("wind", "areaLoad")}</F>
+        <F label="Seismic Cs">{num("cs", null, 0.01)}</F>
       </div>
-      <div className="text-[10px] text-ink-400 leading-snug mb-2">Wind and seismic generators are simplified (uniform net pressure; ELF with user Cs) and are not code calculations. Self-weight of members and slabs is in case DL.</div>
+      <div className="text-[10px] text-ink-400 leading-snug mb-2">
+        {p.standard === "TH" ? "Thai presets: load factors per EIT 1008-38 strength design (1.4D+1.7L …), seismic combos in DPT 1301/1302 style, live loads per Ministerial Regulation No. 6. Verify against the editions in force. " : ""}
+        Wind and seismic generators are simplified (uniform net pressure; ELF with user Cs) — not a DPT 1311 / DPT 1301 / code calculation. Self-weight is in case DL.
+      </div>
       <button className="btn-primary w-full" disabled={busy} onClick={run}>Generate building</button>
     </div>
   );

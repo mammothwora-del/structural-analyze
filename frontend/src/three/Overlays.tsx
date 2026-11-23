@@ -7,7 +7,7 @@ import { fmt } from "../lib/display";
 import { footingPressure } from "../lib/footing";
 import { modelBounds } from "../lib/geometry";
 import type { CaseResult, Model, Results, Vec3 } from "../lib/types";
-import { useStore } from "../store";
+import { useStore, useU } from "../store";
 import { Arrows, type ArrowSpec } from "./Arrows";
 import { usePositions } from "./Members";
 
@@ -139,6 +139,7 @@ export function GridLines({ model }: { model: Model }) {
 
 /** Applied loads of the selected case/combination (factored). */
 export function LoadsLayer({ model, results }: { model: Model; results: Results | null }) {
+  const u = useU();
   const pos = usePositions(model);
   const { loadSel, animate, showLabels, maxLevel } = useStore();
   const factors = factorsFor(model, loadSel);
@@ -154,7 +155,7 @@ export function LoadsLayer({ model, results }: { model: Model; results: Results 
       for (const s of l.slabs ?? (l.slab ? [l.slab] : [])) slabQ[s] = (slabQ[s] ?? 0) + factors[l.case] * (l.q ?? 0);
     }
     const sw = model.load_cases.find((c) => c.self_weight && c.id in factors);
-    if (sw) for (const s of model.slabs) slabQ[s.id] = (slabQ[s.id] ?? 0) + factors[sw.id] * s.thickness * 25;
+    if (sw) for (const s of model.slabs) slabQ[s.id] = (slabQ[s.id] ?? 0) + factors[sw.id] * s.thickness * (s.density ?? 25);
     const qmax = Math.max(1e-9, ...Object.values(slabQ).map(Math.abs));
     for (const s of model.slabs) {
       if (maxLevel !== null && (s.level ?? 0) > maxLevel) continue;
@@ -166,7 +167,7 @@ export function LoadsLayer({ model, results }: { model: Model; results: Results 
         const p = c[0].clone().lerp(c[1], u).lerp(c[3].clone().lerp(c[2], u), v);
         arrows.push({ tip: p.clone().add(new THREE.Vector3(0, 0, 0.05)), dir: new THREE.Vector3(0, 0, Math.sign(-q) || -1), length: L, color: slabColor, radius: 0.035 });
       }
-      if (showLabels) labels.push({ p: c[0].clone().lerp(c[2], 0.5).add(new THREE.Vector3(0, 0, L + 0.3)), text: `${fmt(q, 2)} kN/m²`, color: "#ffb870" });
+      if (showLabels) labels.push({ p: c[0].clone().lerp(c[2], 0.5).add(new THREE.Vector3(0, 0, L + 0.3)), text: u.w("areaLoad", q), color: "#ffb870" });
     }
     // nodal loads
     const nl = model.loads.filter((l) => l.kind === "nodal" && l.case in factors);
@@ -179,7 +180,7 @@ export function LoadsLayer({ model, results }: { model: Model; results: Results 
       if (maxLevel !== null && lev > maxLevel) continue;
       const len = (0.05 + 0.1 * m / fmax) * size;
       arrows.push({ tip: V(pos.get(l.node!)!), dir: F.clone().normalize(), length: len, color: nodalColor, radius: 0.06 });
-      if (showLabels) labels.push({ p: V(pos.get(l.node!)!).addScaledVector(F.clone().normalize(), -len - 0.3), text: `${fmt(m, 1)} kN`, color: "#ff8fa3" });
+      if (showLabels) labels.push({ p: V(pos.get(l.node!)!).addScaledVector(F.clone().normalize(), -len - 0.3), text: u.w("force", m), color: "#ff8fa3" });
     }
     // user member loads (dist/point)
     for (const l of model.loads) {
@@ -198,11 +199,11 @@ export function LoadsLayer({ model, results }: { model: Model; results: Results 
           const t = k / 6;
           arrows.push({ tip: a.clone().lerp(b, t), dir: dir.clone().multiplyScalar(Math.sign(w[0] || 1)), length: 0.06 * size, color: memberColor, radius: 0.03 });
         }
-        if (showLabels) labels.push({ p: a.clone().lerp(b, 0.5).addScaledVector(dir, -0.08 * size), text: `${fmt(w[0], 2)} kN/m`, color: "#ffe08a" });
+        if (showLabels) labels.push({ p: a.clone().lerp(b, 0.5).addScaledVector(dir, -0.08 * size), text: u.w("lineLoad", w[0]), color: "#ffe08a" });
       }
     }
     return { arrows, labels, sw: !!sw };
-  }, [model, pos, factors, size, showLabels, maxLevel]);
+  }, [model, pos, factors, size, showLabels, maxLevel, u.sys]);
   return (
     <group>
       <Arrows arrows={data.arrows} pulse={animate} />
@@ -213,6 +214,7 @@ export function LoadsLayer({ model, results }: { model: Model; results: Results 
 
 /** Support reactions as arrows (force from support on structure). */
 export function ReactionsLayer({ model, res, labels }: { model: Model; res: CaseResult; labels: boolean }) {
+  const u = useU();
   const pos = usePositions(model);
   const size = modelBounds(model).size;
   const arrows: ArrowSpec[] = [];
@@ -228,7 +230,7 @@ export function ReactionsLayer({ model, res, labels }: { model: Model; res: Case
     const len = (0.04 + 0.12 * m / rmax) * size;
     const dir = F.clone().normalize();
     arrows.push({ tip: p.clone().add(new THREE.Vector3(0, 0, -below)), dir, length: len, color: colorAt(m / rmax), radius: 0.08 });
-    if (labels) lab.push({ p: p.clone().add(new THREE.Vector3(0, 0, -below)).addScaledVector(dir, -len - 0.35), text: `${fmt(r[2], 1)} kN` });
+    if (labels) lab.push({ p: p.clone().add(new THREE.Vector3(0, 0, -below)).addScaledVector(dir, -len - 0.35), text: u.w("force", r[2]) });
   }
   return (
     <group>
@@ -240,6 +242,7 @@ export function ReactionsLayer({ model, res, labels }: { model: Model; res: Case
 
 /** Soil pressure under footings drawn as a coloured surface (rigid footing, linear pressure). */
 export function FootingPressure({ model, res }: { model: Model; res: CaseResult }) {
+  const u = useU();
   const pos = usePositions(model);
   const sel = useStore((s) => s.loadSel);
   const showLabels = useStore((s) => s.showLabels);
@@ -279,7 +282,7 @@ export function FootingPressure({ model, res }: { model: Model; res: CaseResult 
           <group key={s.node}>
             <mesh geometry={g}><meshStandardMaterial vertexColors side={THREE.DoubleSide} /></mesh>
             {showLabels && <Label p={[p[0], p[1], p[2] - f.t - 0.1 - fp.qmax * hScale - 0.4]} color={fp.uplift ? "#ff7ad9" : "#d3dce6"}>
-              {fmt(fp.qmax, 0)} / {fmt(fp.qmin, 0)} kN/m²{fp.uplift ? " ⚠" : ""}
+              {u.f("soil", fp.qmax)} / {u.w("soil", fp.qmin)}{fp.uplift ? " ⚠" : ""}
             </Label>}
           </group>
         );

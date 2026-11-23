@@ -4,7 +4,7 @@ export interface Node { id: string; x: number; y: number; z: number; level?: num
 export interface Section { name?: string; shape: "rect" | "I" | "circle" | "general"; material: string; b?: number; h?: number; bf?: number; tf?: number; tw?: number; d?: number; A?: number; Iy?: number; Iz?: number; J?: number }
 export interface Material { name: string; kind: string; E: number; nu: number; density: number; fck?: number; fy?: number }
 export interface Element { id: string; type: "column" | "beam" | "brace"; role?: string; i: string; j: string; section: string; level?: number; label?: string; roll?: number }
-export interface Slab { id: string; corners: string[]; thickness: number; span_type?: string; level?: number; label?: string }
+export interface Slab { id: string; corners: string[]; thickness: number; density?: number; material?: string; span_type?: string; level?: number; label?: string }
 export interface Footing { B: number; L: number; t: number; type?: string; label?: string }
 export interface Support { node: string; type?: "fixed" | "pinned" | "roller"; dofs?: number[]; footing?: Footing }
 export interface LoadCase { id: string; name: string; type: string; self_weight?: boolean }

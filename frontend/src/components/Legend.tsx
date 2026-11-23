@@ -2,12 +2,14 @@ import { BANDS, cssColorAt, normalize, valueAt } from "../lib/colormap";
 import { COMP_LABEL, fmt, type Display } from "../lib/display";
 import type { FlowData, PathDir } from "../lib/loadpath";
 import type { ForceComp } from "../lib/types";
-import { useStore } from "../store";
+import { useStore, useU } from "../store";
 
 /** Dynamic legend ("control panel") with value bands and share of members in each band. */
 export function Legend({ display, flows }: { display: Display; flows: FlowData | null }) {
   const { mode, forceComp, set, deformScale, pathDir, colorTransform } = useStore();
   const { scale, values } = display;
+  const u = useU();
+  const show = (v: number) => (scale.kind ? u.f(scale.kind, v) : fmt(v, scale.max < 10 ? 2 : 0));
   // share of members (by their max value) in each band
   const counts = new Array(BANDS).fill(0);
   const ids = Object.keys(values);
@@ -24,7 +26,7 @@ export function Legend({ display, flows }: { display: Display; flows: FlowData |
         <span className="tag bg-emerald-500/15 text-emerald-300">FEM</span>
       </div>
       <div className="mt-1 font-semibold text-ink-200">{scale.label}</div>
-      <div className="text-ink-400">[{scale.unit}]</div>
+      <div className="text-ink-400">[{scale.kind ? u.u(scale.kind) : scale.unit}]</div>
 
       {mode === "forces" && (
         <div className="mt-2 grid grid-cols-3 gap-0.5">
@@ -67,13 +69,13 @@ export function Legend({ display, flows }: { display: Display; flows: FlowData |
             const pct = ids.length ? (counts[k] / ids.length) * 100 : 0;
             return (
               <div key={k} className="flex items-center gap-1.5">
-                <span className="w-12 text-right num text-ink-300">{fmt(hi, scale.max < 10 ? 2 : 0)}</span>
+                <span className="w-12 text-right num text-ink-300">{show(hi)}</span>
                 <span className="h-3.5 w-9 rounded-sm" style={{ background: cssColorAt((k + 0.5) / BANDS) }} />
                 <span className="num text-ink-400">{pct.toFixed(1)} %</span>
               </div>
             );
           })}
-          <div className="flex items-center gap-1.5"><span className="w-12 text-right num text-ink-300">{fmt(scale.min, 0)}</span></div>
+          <div className="flex items-center gap-1.5"><span className="w-12 text-right num text-ink-300">{show(scale.min)}</span></div>
         </div>
       )}
       {mode === "reactions" && <ReactionLegend />}
@@ -84,12 +86,13 @@ export function Legend({ display, flows }: { display: Display; flows: FlowData |
 }
 
 function ReactionLegend() {
+  const u = useU();
   const model = useStore((s) => s.model)!;
   const qa = model.settings.allowable_bearing;
   return (
     <div className="mt-2 space-y-1">
       <div className="h-3 rounded" style={{ background: `linear-gradient(90deg, ${[0, 0.25, 0.5, 0.75, 1].map((t) => cssColorAt(t)).join(",")})` }} />
-      <div className="flex justify-between num text-ink-400"><span>0</span><span>q_allow = {qa}</span></div>
+      <div className="flex justify-between num text-ink-400"><span>0</span><span>q_allow = {u.w("soil", qa, 0)}</span></div>
       <div className="text-[10px] text-ink-400 leading-snug">Footing colour = q_max / q_allow (user input). Surfaces below footings show the linear contact pressure of a rigid footing, full contact assumed. Magenta = uplift (assumption invalid). Not a geotechnical design check.</div>
     </div>
   );

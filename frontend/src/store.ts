@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api } from "./lib/api";
 import type { PathDir, TraceResult } from "./lib/loadpath";
 import type { ForceComp, Load, Mode, Model, Results } from "./lib/types";
+import { U, type UnitSystem } from "./lib/units";
 
 export type Selection = { kind: "element" | "node" | "slab"; id: string } | null;
 
@@ -31,6 +32,7 @@ interface State {
   isolated: string[] | null;
   bottomTab: string;
   colorTransform: "linear" | "sqrt";
+  units: UnitSystem;
   log: string[];
   history: Model[];
   set: (p: Partial<State>) => void;
@@ -49,7 +51,7 @@ export const useStore = create<State>((set, get) => ({
   mode: "model", view: "3d", loadSel: "DL", selection: null, multi: [],
   forceComp: "My", deformScale: 50, animate: true, showLabels: false, showSlabs: true,
   hiddenTypes: {}, maxLevel: null, exploded: 0, ortho: false, pathDir: "auto", trace: null, isolated: null,
-  bottomTab: "log", log: [], history: [], colorTransform: "sqrt",
+  bottomTab: "log", log: [], history: [], colorTransform: "sqrt", units: (() => { try { return (localStorage.getItem("units") as UnitSystem) || "SI"; } catch { return "SI"; } })(),
   set: (p) => set(p),
   setModel: (m, keepResults = false) => set({ model: m, results: keepResults ? get().results : null, resultsStale: false, trace: null, selection: null }),
   editModel: (fn) => {
@@ -94,3 +96,6 @@ export const useStore = create<State>((set, get) => ({
   },
   addLoad: (l) => get().editModel((m) => { m.loads.push(l); }),
 }));
+
+/** Unit formatter bound to the selected display system. */
+export const useU = () => U(useStore((s) => s.units));

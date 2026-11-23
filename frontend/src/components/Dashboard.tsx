@@ -2,7 +2,8 @@ import { useMemo } from "react";
 import { combinedResult } from "../lib/combine";
 import { cssColorAt } from "../lib/colormap";
 import { fmt, stressLimit } from "../lib/display";
-import { useStore } from "../store";
+import { useStore, useU } from "../store";
+import type { Kind } from "../lib/units";
 
 const Card = ({ title, value, unit, sub, tone }: { title: string; value: string; unit?: string; sub?: React.ReactNode; tone?: "ok" | "bad" }) => (
   <div className="rounded-lg border border-ink-700 bg-ink-850 p-3">
@@ -12,7 +13,8 @@ const Card = ({ title, value, unit, sub, tone }: { title: string; value: string;
   </div>
 );
 
-function HBar({ rows, unit, color }: { rows: { label: string; value: number; t?: number }[]; unit: string; color?: string }) {
+function HBar({ rows, kind, color }: { rows: { label: string; value: number; t?: number }[]; kind?: Kind; color?: string }) {
+  const u = useU();
   const max = Math.max(1e-9, ...rows.map((r) => Math.abs(r.value)));
   return (
     <div className="space-y-1">
@@ -22,7 +24,7 @@ function HBar({ rows, unit, color }: { rows: { label: string; value: number; t?:
           <div className="flex-1 h-4 bg-ink-800 rounded-sm overflow-hidden">
             <div className="h-full rounded-sm" style={{ width: `${(Math.abs(r.value) / max) * 100}%`, background: color ?? cssColorAt(r.t ?? Math.abs(r.value) / max) }} />
           </div>
-          <span className="w-24 text-right num text-ink-200">{fmt(r.value, 1)} {unit}</span>
+          <span className="w-24 text-right num text-ink-200">{kind ? u.w(kind, r.value) : r.value.toFixed(2)}</span>
         </div>
       ))}
     </div>
@@ -31,6 +33,7 @@ function HBar({ rows, unit, color }: { rows: { label: string; value: number; t?:
 
 export function Dashboard() {
   const { model, results, loadSel, set, resultsStale } = useStore();
+  const u = useU();
   const data = useMemo(() => {
     if (!model || !results) return null;
     const res = combinedResult(model, results, loadSel)!;
@@ -58,7 +61,7 @@ export function Dashboard() {
     const sumR = Object.values(res.reactions).reduce((s, r) => s + r[2], 0);
     const slabSW = model.slabs.reduce((s, sl) => {
       const t = results.tributary[sl.id];
-      return s + (t ? t.area * sl.thickness * 25 : 0);
+      return s + (t ? t.area * sl.thickness * (sl.density ?? 25) : 0);
     }, 0);
     const frameSW = Object.entries(results.elements).reduce((s, [, i]) => s + i.props.A * (model.materials[i.material]?.density ?? 0) * i.L, 0);
     const eq = [...model.load_cases.map((c) => ({ id: c.id, eq: results.cases[c.id]?.equilibrium })),
@@ -80,31 +83,31 @@ export function Dashboard() {
         <span className="tag bg-amber-500/15 text-amber-300">No design code checks implemented — no safety or compliance claim</span>
       </div>
       <div className="grid grid-cols-5 gap-3">
-        <Card title="Total dead load (DL)" value={fmt(data.caseTotal("DL"), 0)} unit="kN" sub="Members + slab self-weight" />
-        <Card title="Superimposed dead (SDL)" value={fmt(data.caseTotal("SDL"), 0)} unit="kN" />
-        <Card title="Total live load (LL)" value={fmt(data.caseTotal("LL"), 0)} unit="kN" />
-        <Card title="Structural weight" value={fmt(data.frameSW + data.slabSW, 0)} unit="kN" sub={`Frame ${fmt(data.frameSW, 0)} + slabs ${fmt(data.slabSW, 0)} kN (footings excl.)`} />
-        <Card title={`Σ support reactions Rz (${loadSel})`} value={fmt(data.sumR, 0)} unit="kN" sub={`Σ applied Fz ${fmt(data.res.equilibrium.applied[2], 1)} kN`} />
-        <Card title="Max displacement" value={fmt(data.maxU.v * 1000, 2)} unit="mm" sub={<>at node {data.maxU.n}</>} />
-        <Card title="Max bending moment" value={fmt(Math.abs(data.M.v), 1)} unit="kN·m" sub={<button className="text-accent" onClick={() => goto(data.M.id)}>{data.M.id}</button>} />
-        <Card title="Max axial force" value={fmt(data.N.v, 1)} unit="kN" sub={<>{data.N.v < 0 ? "compression" : "tension"} · <button className="text-accent" onClick={() => goto(data.N.id)}>{data.N.id}</button></>} />
-        <Card title="Max shear force" value={fmt(Math.abs(data.V.v), 1)} unit="kN" sub={<button className="text-accent" onClick={() => goto(data.V.id)}>{data.V.id}</button>} />
+        <Card title="Total dead load (DL)" value={u.f("force", data.caseTotal("DL"), 0)} unit={u.u("force")} sub="Members + slab self-weight" />
+        <Card title="Superimposed dead (SDL)" value={u.f("force", data.caseTotal("SDL"), 0)} unit={u.u("force")} />
+        <Card title="Total live load (LL)" value={u.f("force", data.caseTotal("LL"), 0)} unit={u.u("force")} />
+        <Card title="Structural weight" value={u.f("force", data.frameSW + data.slabSW, 0)} unit={u.u("force")} sub={`Frame ${u.w("force", data.frameSW, 0)} + slabs ${u.w("force", data.slabSW, 0)} (footings excl.)`} />
+        <Card title={`Σ support reactions Rz (${loadSel})`} value={u.f("force", data.sumR, 0)} unit={u.u("force")} sub={`Σ applied Fz ${u.w("force", data.res.equilibrium.applied[2], 1)}`} />
+        <Card title="Max displacement" value={u.f("disp", data.maxU.v)} unit={u.u("disp")} sub={<>at node {data.maxU.n}</>} />
+        <Card title="Max bending moment" value={u.f("moment", Math.abs(data.M.v))} unit={u.u("moment")} sub={<button className="text-accent" onClick={() => goto(data.M.id)}>{data.M.id}</button>} />
+        <Card title="Max axial force" value={u.f("force", data.N.v)} unit={u.u("force")} sub={<>{data.N.v < 0 ? "compression" : "tension"} · <button className="text-accent" onClick={() => goto(data.N.id)}>{data.N.id}</button></>} />
+        <Card title="Max shear force" value={u.f("force", Math.abs(data.V.v))} unit={u.u("force")} sub={<button className="text-accent" onClick={() => goto(data.V.id)}>{data.V.id}</button>} />
         <Card title="Equilibrium status" value={eqOk ? "BALANCED" : "CHECK"} tone={eqOk ? "ok" : "bad"} sub={`${data.eq.length} cases/combos · max error ${Math.max(...data.eq.map((e) => e.eq?.force_error ?? 0)).toExponential(1)} kN`} />
       </div>
       <div className="grid grid-cols-3 gap-3 mt-3">
         <div className="rounded-lg border border-ink-700 bg-ink-850 p-3">
           <div className="panel-title mb-2">Load accumulation — Σ column axial per storey</div>
-          <HBar rows={data.storey} unit="kN" />
+          <HBar rows={data.storey} kind="force" />
           <div className="text-[10px] text-ink-400 mt-2">Compression at the bottom of each storey's columns. The roof-to-foundation build-up of the vertical load path.</div>
         </div>
         <div className="rounded-lg border border-ink-700 bg-ink-850 p-3">
           <div className="panel-title mb-2">Critical members — |σ| / user limit</div>
-          <HBar rows={data.crit.map((c) => ({ label: c.id, value: c.r, t: Math.min(1, c.r) }))} unit="" />
+          <HBar rows={data.crit.map((c) => ({ label: c.id, value: c.r, t: Math.min(1, c.r) }))} />
           <div className="text-[10px] text-ink-400 mt-2">Elastic extreme-fibre stress vs. user-defined limit (settings). Not a design check.</div>
         </div>
         <div className="rounded-lg border border-ink-700 bg-ink-850 p-3 max-h-[340px] overflow-y-auto">
           <div className="panel-title mb-2">Support reactions Rz</div>
-          <HBar rows={data.reactions} unit="kN" color="#3fb6ff" />
+          <HBar rows={data.reactions} kind="force" color="#3fb6ff" />
         </div>
       </div>
       <div className="rounded-lg border border-ink-700 bg-ink-850 p-3 mt-3">
