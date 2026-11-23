@@ -14,9 +14,10 @@ def building():
     return generate_building({"x_spans": [6, 6], "y_spans": [5, 5], "story_heights": [4, 3.5, 3.5]})
 
 
-@pytest.fixture(scope="module")
-def results(building):
-    return analyze(building)
+@pytest.fixture(scope="module", params=["shell", "tributary"])
+def results(request, building):
+    m = {**building, "settings": {**building["settings"], "slab_model": request.param}}
+    return analyze(m)
 
 
 def test_generator_counts(building):
@@ -81,6 +82,8 @@ def test_node_force_balance(building, results):
         for end, n in (("end_i", e["i"]), ("end_j", e["j"])):
             fg = R.T @ np.array(st[end][:3])
             sums[n] = sums.get(n, np.zeros(3)) - fg   # force from member on node
+    for n, f in r.get("shell_node_force", {}).items():   # force from slab shells on node
+        sums[n] = sums.get(n, np.zeros(3)) + np.array(f)
     sup = {s["node"] for s in building["supports"]}
     for n, s in sums.items():
         if n in sup:
@@ -114,3 +117,45 @@ def test_stations_identical_across_cases(results):
     for eid in cases[0]["elements"]:
         xs = [c["elements"][eid]["x"] for c in cases]
         assert all(x == xs[0] for x in xs), eid
+
+
+def test_shell_slab_load_reaches_members(building):
+    """Shell slabs: the slab load delivered to beams (interior mesh nodes) plus that delivered at the
+    beam-column joints equals the total applied area load."""
+    res = analyze(building)
+    assert res["slab_model"] == "shell"
+    r = res["cases"]["SDL"]
+    q_total = r["equilibrium"]["applied"][2]
+    to_members = sum(f[2] for per in r["panel_transfer"].values() for f in per.values())
+    at_nodes = sum(f[2] for f in r["shell_node_force"].values())
+    assert to_members + at_nodes == pytest.approx(q_total, rel=1e-6)
+    # every beam carries part of the slab load; the panel results are present for every slab
+    beams = [e["id"] for e in building["elements"] if e["type"] == "beam"]
+    assert all(b in r["panel_transfer"] for b in beams)
+    assert set(r["panel_results"]) == {s["id"] for s in building["slabs"]}
+    # parent members are reassembled: no sub-element ids in the output
+    assert not any("~" in k for k in r["elements"]) and not any("~" in k for k in res["elements"])
+
+
+def test_shell_vs_tributary_column_loads(building):
+    """Both slab models carry the same total; individual column loads differ by a bounded amount."""
+    shell = analyze(building)
+    trib = analyze({**building, "settings": {**building["settings"], "slab_model": "tributary"}})
+    rs, rt = shell["cases"]["SDL"]["reactions"], trib["cases"]["SDL"]["reactions"]
+    assert sum(v[2] for v in rs.values()) == pytest.approx(sum(v[2] for v in rt.values()), rel=1e-5)
+    for n in rs:
+        assert rs[n][2] == pytest.approx(rt[n][2], rel=0.3)
+
+
+def test_shear_walls_attract_lateral_load():
+    m = generate_building({"x_spans": [6, 6, 6], "y_spans": [5, 5], "story_heights": [3.5, 3.5], "walls": "x"})
+    res = analyze(m)
+    assert res["ok"], [w for w in res["warnings"] if w["level"] == "error"]
+    r = res["cases"]["WX"]
+    assert r["equilibrium"]["ok"]
+    groups = res["mesh"]["groups"]
+    base = {n for g, info in groups.items() if info["kind"] == "wall" for n in info["nodes"]}
+    total = sum(v[0] for v in r["reactions"].values())
+    walls = sum(v[0] for n, v in r["reactions"].items() if n in base)
+    assert total == pytest.approx(-r["equilibrium"]["applied"][0], rel=1e-5)
+    assert walls / total > 0.5   # the stiff walls carry most of the storey shear

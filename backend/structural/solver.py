@@ -11,6 +11,8 @@
   body [0, x]; deflected shape by integrating curvature M/EI from end i.
 * Global equilibrium check of applied loads vs. support reactions (forces and
   moments about the origin), computed from the *original* load definitions.
+* Optional flat 4-node shell elements (see shell.py) for slabs and walls,
+  assembled into the same global system; surface pressure and self-weight.
 * Stability diagnostics: unsupported / disconnected parts, DOFs without
   stiffness, near-zero LU pivots (mechanisms) and solution residual.
 
@@ -27,6 +29,7 @@ import scipy.sparse.linalg as spla
 from scipy.integrate import cumulative_simpson
 
 from .sections import MATERIALS, material_props, section_properties
+from .shell import ShellElement
 
 DOF = 6
 DOF_NAMES = ("ux", "uy", "uz", "rx", "ry", "rz")
@@ -215,15 +218,46 @@ class FrameModel:
             self.elements.append({
                 "id": e["id"], "i": e["i"], "j": e["j"], "L": L, "R": R,
                 "props": props, "mat": mp, "material": mat_id,
+                "nst": e.get("n_stations"), "ndense": int(e.get("n_dense", 41)),
                 "k_local": frame_stiffness_local(mp["E"], mp["G"], props.A, props.Iy, props.Iz, props.J, L),
             })
         self.el_index = {e["id"]: k for k, e in enumerate(self.elements)}
+
+        self.shells = []
+        for s in data.get("shells", []):
+            if s["id"] in seen:
+                raise ModelError(f"Duplicate element id {s['id']}")
+            seen.add(s["id"])
+            if len(s["nodes"]) != 4 or any(n not in self.node_xyz for n in s["nodes"]):
+                raise ModelError(f"Shell {s['id']} must reference 4 existing nodes")
+            mat = mats.get(s.get("material"))
+            if mat is None:
+                raise ModelError(f"Shell {s['id']} references missing material {s.get('material')}")
+            mp = material_props(mat)
+            nu = float(mat.get("nu", 0.2))
+            dens = float(s["density"]) if s.get("density") is not None else mp["density"]
+            X = np.array([self.node_xyz[n] for n in s["nodes"]])
+            try:
+                el = ShellElement(s["id"], X, mp["E"], nu, float(s["t"]), dens, s.get("xref"))
+            except ValueError as exc:
+                raise ModelError(str(exc)) from exc
+            if el.warp > 0.01:
+                self.warnings.append({"level": "warning", "code": "warped_shell",
+                                      "message": f"Shell {s['id']} is warped ({el.warp * 100:.1f}% of its size); "
+                                                 f"the flat element is approximate for it."})
+            self.shells.append({"id": s["id"], "nodes": list(s["nodes"]), "el": el,
+                                "group": s.get("group"), "material": s.get("material")})
+        self.shell_index = {s["id"]: k for k, s in enumerate(self.shells)}
+        if not self.elements and not self.shells:
+            raise ModelError("The model has no elements")
 
         # Only nodes attached to elements take part in the analysis.
         used = set()
         for e in self.elements:
             used.add(e["i"])
             used.add(e["j"])
+        for s in self.shells:
+            used.update(s["nodes"])
         orphan = [n for n in self.node_ids if n not in used]
         if orphan:
             self.warnings.append({"level": "info", "code": "orphan_nodes",
@@ -262,8 +296,10 @@ class FrameModel:
                 a = parent[a]
             return a
 
-        for e in self.elements:
-            ra, rb = find(self.nidx[e["i"]]), find(self.nidx[e["j"]])
+        pairs = [(e["i"], e["j"]) for e in self.elements]
+        pairs += [(s["nodes"][0], n) for s in self.shells for n in s["nodes"][1:]]
+        for a, b in pairs:
+            ra, rb = find(self.nidx[a]), find(self.nidx[b])
             if ra != rb:
                 parent[ra] = rb
         groups: dict[int, list] = {}
@@ -298,6 +334,13 @@ class FrameModel:
             rows.append(rr.ravel())
             cols.append(cc.ravel())
             vals.append(kg.ravel())
+        for s in self.shells:
+            dofs = np.concatenate([np.arange(DOF * self.nidx[n], DOF * self.nidx[n] + 6) for n in s["nodes"]])
+            s["dofs"] = dofs
+            rr, cc = np.meshgrid(dofs, dofs, indexing="ij")
+            rows.append(rr.ravel())
+            cols.append(cc.ravel())
+            vals.append(s["el"].k_global.ravel())
         return sp.csc_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
                              shape=(self.ndof, self.ndof))
 
@@ -355,9 +398,13 @@ class FrameModel:
 
     # ---------------------------------------------------------------- loads
     def _case_loads(self, case_id: str):
-        """Return (F global nodal vector, {el_index: MemberLoadLocal}, applied resultant)."""
+        """Return (F global nodal vector, {el_index: MemberLoadLocal}, applied resultant).
+
+        Shell surface loads are converted to consistent nodal forces; they are
+        also kept per shell (self._shell_f) so that element nodal forces can be recovered."""
         F = np.zeros(self.ndof)
         member: dict[int, MemberLoadLocal] = {}
+        shell_f: dict[int, np.ndarray] = {}
         resultant = np.zeros(6)  # Fx Fy Fz Mx My Mz about origin
         lost = 0.0
 
@@ -379,6 +426,17 @@ class FrameModel:
                     Ftot = np.array([0, 0, -w * e["L"]])
                     resultant[:3] += Ftot
                     resultant[3:] += np.cross(0.5 * (xi + xj), Ftot)
+            for k, s in enumerate(self.shells):
+                el = s["el"]
+                w = el.density * el.t
+                if w > 0:
+                    shell_f[k] = shell_f.get(k, 0) + el.pressure_load([0.0, 0.0, -w])
+
+        def shell_targets(ld):
+            ids = ld.get("shells") or ([ld["shell"]] if "shell" in ld else [])
+            if ld.get("group") is not None:
+                ids = [s["id"] for s in self.shells if s["group"] == ld["group"]]
+            return ids
 
         for ld in self.data.get("loads", []):
             if ld.get("case") != case_id:
@@ -428,8 +486,31 @@ class FrameModel:
                     ml(k).point.append((a, P * dloc))
                     resultant[:3] += P * dvec
                     resultant[3:] += np.cross(xi + a * ex, P * dvec)
+            elif kind == "pressure":
+                q = float(ld["q"])
+                for sid in shell_targets(ld):
+                    k = self.shell_index.get(sid)
+                    if k is None:
+                        lost += 1.0
+                        continue
+                    el = self.shells[k]["el"]
+                    if ld.get("normal"):
+                        dvec = el.R[2]
+                    else:
+                        dvec = np.asarray(ld.get("direction", [0, 0, -1]), dtype=float)
+                        dvec = dvec / np.linalg.norm(dvec)
+                    shell_f[k] = shell_f.get(k, 0) + el.pressure_load(q * dvec)
             else:
                 raise ModelError(f"Unsupported load kind '{kind}' (area loads must be converted first)")
+        for k, f in shell_f.items():
+            s = self.shells[k]
+            for a, n in enumerate(s["nodes"]):
+                fa = f[6 * a: 6 * a + 3]
+                F[DOF * self.nidx[n]: DOF * self.nidx[n] + 3] += fa
+                resultant[:3] += fa
+                resultant[3:] += np.cross(self.node_xyz[n], fa)
+        self._lost = lost
+        self._shell_f = shell_f
         return F, member, resultant
 
     # ---------------------------------------------------------------- solve
@@ -438,7 +519,7 @@ class FrameModel:
         results can be superposed exactly for load combinations."""
         self.extra_bps = {}
         for cid in case_ids:
-            _, member, _ = self._case_loads(cid)
+            _, member, _ = self._case_loads(cid)[:3]
             for k, mlo in member.items():
                 L = self.elements[k]["L"]
                 pts = [b for b in mlo.breakpoints() if 1e-9 < b < L - 1e-9]
@@ -459,7 +540,11 @@ class FrameModel:
         rel_resid = float(np.linalg.norm(resid[self.free]) / max(np.linalg.norm(rhs), 1e-12))
         reactions_vec = resid  # K u - F at restrained dofs
 
+        shell_f = self._shell_f
         warnings = []
+        if self._lost:
+            warnings.append({"level": "warning", "code": "load_target_missing",
+                             "message": "Some loads refer to missing nodes or elements and were ignored."})
         if rel_resid > 1e-6:
             warnings.append({"level": "error", "code": "residual",
                              "message": f"Solution residual is high ({rel_resid:.2e}); the system is ill-conditioned or unstable."})
@@ -480,8 +565,21 @@ class FrameModel:
             d_loc = e["T"] @ u[e["dofs"]]
             f = e["k_local"] @ d_loc - mlo.equivalent_nodal(e["L"])
             extra = sorted(getattr(self, "extra_bps", {}).get(k, ()))
-            el_results[e["id"]] = self._stations(e, f, d_loc, mlo, n_stations, extra)
+            el_results[e["id"]] = self._stations(e, f, d_loc, mlo, e["nst"] or n_stations, extra)
 
+        shell_results = {}
+        shell_fe = {}
+        shell_node_force = {}
+        for k, s in enumerate(self.shells):
+            el = s["el"]
+            ue = u[s["dofs"]]
+            fe = el.k_global @ ue - shell_f.get(k, 0)      # forces the nodes exert on the shell (global)
+            rr = (el.recovery() @ ue).reshape(5, 8)
+            shell_results[s["id"]] = {"c": rr[0].tolist(), "n": rr[1:].tolist()}
+            shell_fe[s["id"]] = np.concatenate([fe[6 * a: 6 * a + 3] for a in range(4)])
+            for a, n in enumerate(s["nodes"]):
+                acc = shell_node_force.setdefault(n, np.zeros(3))
+                acc -= fe[6 * a: 6 * a + 3]                # force the shell exerts on the node
         diff = applied + react_res
         size = max(1.0, *(np.linalg.norm(self.node_xyz[n]) for n in self.active_nodes))
         fscale = max(np.abs(applied[:3]).max(), 1e-9)
@@ -499,6 +597,9 @@ class FrameModel:
             "displacements": displacements,
             "reactions": reactions,
             "elements": el_results,
+            "shells": shell_results,
+            "shell_node_force": {n: v.tolist() for n, v in shell_node_force.items()},
+            "_shell_fe": shell_fe,
             "equilibrium": {
                 "applied": applied.tolist(),
                 "reactions": react_res.tolist(),
@@ -516,7 +617,7 @@ class FrameModel:
         bps = [b for b in mlo.breakpoints() if 1e-9 < b < L - 1e-9]
         bps += [a + 1e-6 * L for a, _ in mlo.point if 1e-9 < a < L * (1 - 2e-6)]  # right side of jumps
         out_x = np.unique(np.r_[np.linspace(0, L, n_stations), bps, list(extra)])
-        dense = np.unique(np.r_[np.linspace(0, L, 41), bps, out_x])
+        dense = np.unique(np.r_[np.linspace(0, L, e["ndense"]), bps, out_x])
         fi = f[:6]
         R, Mq = mlo.integrals(dense)
         x = dense
