@@ -3,6 +3,7 @@ import { combinedResult } from "../lib/combine";
 import type { Model } from "../lib/types";
 import { useStore } from "../store";
 import { MODES } from "./Viewport";
+import { SYSTEM_LABEL, type UnitSystem } from "../lib/units";
 
 function download(name: string, data: string | Blob, type = "application/json") {
   const blob = typeof data === "string" ? new Blob([data], { type }) : data;
@@ -90,8 +91,12 @@ export function TopBar() {
       <div className="flex-1" />
       {model && (
         <>
-          <span className="text-[11px] text-ink-400">Load</span>
-          <select className="input !w-60" value={loadSel} onChange={(e) => set({ loadSel: e.target.value, trace: null })}>
+          <span className="text-[11px] text-ink-400">Units</span>
+          <select className="input !w-40" value={s.units} onChange={(e) => { const v = e.target.value as UnitSystem; try { localStorage.setItem("units", v); } catch { /* ignore */ } set({ units: v }); }}>
+            {(Object.keys(SYSTEM_LABEL) as UnitSystem[]).map((k) => <option key={k} value={k}>{SYSTEM_LABEL[k]}</option>)}
+          </select>
+          <span className="text-[11px] text-ink-400 ml-2">Load</span>
+          <select className="input !w-52" value={loadSel} onChange={(e) => set({ loadSel: e.target.value, trace: null })}>
             {["Load cases", "Combinations"].map((g) => (
               <optgroup key={g} label={g}>{options.filter((o) => o.grp === g).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}</optgroup>
             ))}

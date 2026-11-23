@@ -15,7 +15,10 @@
  *                   t < 0 => node delivers load into member.
  *  - member load  : t_i + t_j = load applied directly on the member (exact member
  *                   equilibrium), e.g. slab tributary loads + self weight.
- *  - node balance : sum_t + P.d + R.d = 0 (exact node equilibrium).
+ *  - node balance : sum_t + P.d + S.d + R.d = 0 (exact node equilibrium), S = force
+ *                   from slab/wall shell elements on the node (shell FEM).
+ *  - panel input  : with shell slabs, the force each slab/wall delivers to a member
+ *                   along its length (FEM nodal forces at the mesh nodes on the member).
  *
  * Path tracing (trace up / trace down from a selected element) attributes the
  * flows using the proportional-sharing rule at nodes and members. The node and
@@ -48,6 +51,8 @@ export interface FlowData {
   through: Record<string, number>;      // max |flow| along member (load carried)
   nodeApplied: Record<string, number>;  // P.d at nodes
   nodeGround: Record<string, number>;   // load delivered to support (-R.d)
+  nodeShell: Record<string, number>;    // S.d: load delivered to a node by slab/wall shells (FEM)
+  panelIn: Record<string, Record<string, number>>; // member -> panel -> load delivered along d (FEM)
   maxThrough: number;
 }
 
@@ -78,11 +83,19 @@ export function computeFlows(model: Model, results: Results, sel: string, dirMod
   }
   const nodeGround: Record<string, number> = {};
   for (const [n, r] of Object.entries(res.reactions)) nodeGround[n] = -dot(r, d);
-  return { d, flow, ti, tj, memberLoad, through, nodeApplied, nodeGround, maxThrough };
+  const nodeShell: Record<string, number> = {};
+  for (const [n, f] of Object.entries(res.shell_node_force ?? {})) nodeShell[n] = dot(f, d);
+  const panelIn: Record<string, Record<string, number>> = {};
+  for (const [eid, per] of Object.entries(res.panel_transfer ?? {})) {
+    panelIn[eid] = {};
+    for (const [g, f] of Object.entries(per)) panelIn[eid][g] = dot(f, d);
+  }
+  return { d, flow, ti, tj, memberLoad, through, nodeApplied, nodeGround, nodeShell, panelIn, maxThrough };
 }
 
 /** Incoming / outgoing loads of one element (for the inspector). */
 export function elementTransfers(model: Model, fd: FlowData, eid: string) {
+  const panels = Object.entries(fd.panelIn[eid] ?? {}).map(([g, v]) => ({ panel: g, value: v }));
   const el = model.elements.find((e) => e.id === eid)!;
   const incoming: { from: string; via: string; value: number; kind: string }[] = [];
   const outgoing: { to: string; via: string; value: number; kind: string }[] = [];
@@ -100,7 +113,7 @@ export function elementTransfers(model: Model, fd: FlowData, eid: string) {
       for (const x of outs) if (x.id !== eid) outgoing.push({ to: x.id, via: n, value: tot > 0 ? (t * x.value) / tot : 0, kind: x.kind });
     }
   }
-  return { incoming, outgoing, memberLoad: fd.memberLoad[eid] };
+  return { incoming, outgoing, memberLoad: fd.memberLoad[eid], panels };
 }
 
 export function nodeIncidence(model: Model) {
@@ -114,7 +127,7 @@ export function nodeIncidence(model: Model) {
   return m;
 }
 
-type Port = { id: string; kind: "element" | "load" | "support"; value: number; end?: "i" | "j" };
+type Port = { id: string; kind: "element" | "load" | "support" | "panel"; value: number; end?: "i" | "j" };
 
 function nodeInputs(fd: FlowData, inc: Map<string, { eid: string; end: "i" | "j" }[]>, n: string): Port[] {
   const out: Port[] = [];
@@ -124,6 +137,8 @@ function nodeInputs(fd: FlowData, inc: Map<string, { eid: string; end: "i" | "j"
   }
   const p = fd.nodeApplied[n] ?? 0;
   if (p > 1e-9) out.push({ id: `load@${n}`, kind: "load", value: p });
+  const sh = fd.nodeShell[n] ?? 0;
+  if (sh > 1e-9) out.push({ id: `shells@${n}`, kind: "panel", value: sh });
   const g = fd.nodeGround[n] ?? 0;
   if (g < -1e-9) out.push({ id: `support@${n}`, kind: "support", value: -g });
   return out;
@@ -139,6 +154,8 @@ function nodeOutputs(fd: FlowData, inc: Map<string, { eid: string; end: "i" | "j
   if (g > 1e-9) out.push({ id: `support@${n}`, kind: "support", value: g });
   const p = fd.nodeApplied[n] ?? 0;
   if (p < -1e-9) out.push({ id: `load@${n}`, kind: "load", value: -p });
+  const sh = fd.nodeShell[n] ?? 0;
+  if (sh < -1e-9) out.push({ id: `shells@${n}`, kind: "panel", value: -sh });
   return out;
 }
 

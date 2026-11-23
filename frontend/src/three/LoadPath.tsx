@@ -7,7 +7,7 @@ import { fmt } from "../lib/display";
 import { modelBounds } from "../lib/geometry";
 import { flowSegments, type FlowData, type TraceResult } from "../lib/loadpath";
 import type { CaseResult, Model, Results } from "../lib/types";
-import { useStore } from "../store";
+import { useStore, useU } from "../store";
 import { Arrows, type ArrowSpec } from "./Arrows";
 import { Label } from "./Overlays";
 import { usePositions, useVisibleElements } from "./Members";
@@ -97,6 +97,7 @@ export function FlowParticles({ model, results, flows, trace }: { model: Model; 
 
 /** Slab tributary areas (Phase 1 assumption) with arrows toward the receiving beams. */
 export function TributaryPanels({ model, results, highlightSlab }: { model: Model; results: Results; highlightSlab?: string | null }) {
+  const u = useU();
   const { loadSel, maxLevel, hiddenTypes, showLabels } = useStore();
   const exploded = useStore((s) => s.exploded);
   const factors = factorsFor(model, loadSel);
@@ -108,7 +109,7 @@ export function TributaryPanels({ model, results, highlightSlab }: { model: Mode
       for (const s of l.slabs ?? (l.slab ? [l.slab] : [])) q[s] = (q[s] ?? 0) + factors[l.case] * (l.q ?? 0);
     }
     const swCase = model.load_cases.find((c) => c.self_weight && c.id in factors);
-    if (swCase) for (const s of model.slabs) q[s.id] = (q[s.id] ?? 0) + factors[swCase.id] * s.thickness * 25;
+    if (swCase) for (const s of model.slabs) q[s.id] = (q[s.id] ?? 0) + factors[swCase.id] * s.thickness * (s.density ?? 25);
     const loads: number[] = [];
     for (const s of model.slabs) {
       const t = results.tributary[s.id];
@@ -144,7 +145,7 @@ export function TributaryPanels({ model, results, highlightSlab }: { model: Mode
         const dir = mid.clone().sub(shrinkC.clone().setZ(mid.z));
         const dist = dir.length();
         if (dist > 1e-6) arrows.push({ tip: mid.clone().addScaledVector(dir.normalize(), -0.25), dir, length: Math.max(0.4, dist * 0.55), color: col.clone(), radius: 0.05 });
-        if (showLabels && highlightSlab === s.id) labels.push({ p: shrinkC, text: `${fmt(load, 1)} kN (${(e.fraction * 100).toFixed(0)}%)` });
+        if (showLabels && highlightSlab === s.id) labels.push({ p: shrinkC, text: `${u.w("force", load)} (${(e.fraction * 100).toFixed(0)}%)` });
       }
     }
     const g = new THREE.BufferGeometry();
@@ -165,6 +166,7 @@ export function TributaryPanels({ model, results, highlightSlab }: { model: Mode
 
 /** Numeric labels for the load path: traced elements, or top members, and supports. */
 export function PathLabels({ model, results, flows, trace, res }: { model: Model; results: Results; flows: FlowData; trace: TraceResult | null; res: CaseResult }) {
+  const u = useU();
   const pos = usePositions(model);
   const elements = useVisibleElements(model);
   const items = useMemo(() => {
@@ -174,7 +176,7 @@ export function PathLabels({ model, results, flows, trace, res }: { model: Model
     vals.filter(([id]) => vis.has(id)).sort((a, b) => b[1] - a[1]).slice(0, 60).forEach(([id, v]) => {
       const el = model.elements.find((e) => e.id === id)!;
       const p = new THREE.Vector3(...pos.get(el.i)!).lerp(new THREE.Vector3(...pos.get(el.j)!), 0.5);
-      out.push({ p, text: `${id} ${fmt(v, 0)}`, color: "#e6edf5" });
+      out.push({ p, text: `${id} ${u.w("force", v)}`, color: "#e6edf5" });
     });
     const sup = trace ? trace.supports : Object.fromEntries(Object.entries(flows.nodeGround).map(([n, v]) => [`support@${n}`, v]));
     for (const [k, v] of Object.entries(sup)) {
@@ -182,7 +184,7 @@ export function PathLabels({ model, results, flows, trace, res }: { model: Model
       const n = k.slice(8);
       const s = model.supports.find((x) => x.node === n);
       const p = new THREE.Vector3(...pos.get(n)!).add(new THREE.Vector3(0, 0, -(s?.footing?.t ?? 0) - 0.9));
-      out.push({ p, text: `R ${fmt(v, 0)} kN`, color: "#7ef0b0" });
+      out.push({ p, text: `R ${u.w("force", v)}`, color: "#7ef0b0" });
     }
     return out;
   }, [model, flows, trace, pos, elements, res]);

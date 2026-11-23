@@ -42,6 +42,8 @@ export interface Scale {
   note?: string;
   /** colour mapping: linear or square-root (emphasises small values; legend values stay exact) */
   transform?: "linear" | "sqrt";
+  /** physical quantity for unit conversion (values are SI) */
+  kind?: import("./units").Kind;
 }
 
 export function normalize(v: number, s: Scale) {

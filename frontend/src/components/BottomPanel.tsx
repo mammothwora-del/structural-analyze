@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { combinedResult } from "../lib/combine";
 import { fmt } from "../lib/display";
-import { useStore } from "../store";
+import { useStore, useU } from "../store";
 
 const TABS = [["log", "Analysis log"], ["warnings", "Warnings"], ["cases", "Load cases"], ["combos", "Combinations"], ["reactions", "Reactions"], ["members", "Member results"]] as const;
 
@@ -59,11 +59,12 @@ function Warnings() {
 }
 
 function Cases() {
+  const u = useU();
   const { model, results, set, loadSel, editModel } = useStore();
   if (!model) return null;
   return (
     <table className="w-full">
-      <thead className="text-ink-400 text-left"><tr><th className="font-medium">ID</th><th className="font-medium">Name</th><th className="font-medium">Type</th><th className="font-medium">Self-wt</th><th className="font-medium">Loads</th><th className="text-right font-medium">ΣFx</th><th className="text-right font-medium">ΣFz (kN)</th><th className="text-right font-medium">Equilibrium</th></tr></thead>
+      <thead className="text-ink-400 text-left"><tr><th className="font-medium">ID</th><th className="font-medium">Name</th><th className="font-medium">Type</th><th className="font-medium">Self-wt</th><th className="font-medium">Loads</th><th className="text-right font-medium">ΣFx</th><th className="text-right font-medium">ΣFz ({u.u("force")})</th><th className="text-right font-medium">Equilibrium</th></tr></thead>
       <tbody>
         {model.load_cases.map((c) => {
           const r = results?.cases[c.id];
@@ -72,8 +73,8 @@ function Cases() {
               <td className="font-mono">{c.id}</td><td>{c.name}</td><td>{c.type}</td>
               <td><input type="checkbox" checked={!!c.self_weight} onChange={(e) => { e.stopPropagation(); editModel((m) => { m.load_cases.find((x) => x.id === c.id)!.self_weight = e.target.checked; }); }} /></td>
               <td className="num">{model.loads.filter((l) => l.case === c.id).length}</td>
-              <td className="text-right num">{r ? fmt(r.equilibrium.applied[0], 1) : "–"}</td>
-              <td className="text-right num">{r ? fmt(r.equilibrium.applied[2], 1) : "–"}</td>
+              <td className="text-right num">{r ? u.f("force", r.equilibrium.applied[0], 1) : "–"}</td>
+              <td className="text-right num">{r ? u.f("force", r.equilibrium.applied[2], 1) : "–"}</td>
               <td className="text-right">{r ? (r.equilibrium.ok ? <span className="text-emerald-300">OK ({r.equilibrium.force_error.toExponential(1)} kN)</span> : <span className="text-red-300">FAILED</span>) : "–"}</td>
             </tr>
           );
@@ -117,6 +118,7 @@ function Combos() {
 }
 
 function Reactions() {
+  const u = useU();
   const { model, results, loadSel, set } = useStore();
   if (!model || !results) return <div className="text-ink-400">Run the analysis first.</div>;
   const res = combinedResult(model, results, loadSel);
@@ -125,21 +127,22 @@ function Reactions() {
   const sum = [0, 1, 2, 3, 4, 5].map((k) => rows.reduce((s, [, r]) => s + r[k], 0));
   return (
     <table className="w-full num">
-      <thead className="text-ink-400"><tr><th className="text-left font-medium">Support ({loadSel})</th>{["Rx", "Ry", "Rz (kN)", "Mx", "My", "Mz (kN·m)"].map((h) => <th key={h} className="text-right font-medium">{h}</th>)}</tr></thead>
+      <thead className="text-ink-400"><tr><th className="text-left font-medium">Support ({loadSel})</th>{["Rx", "Ry", `Rz (${u.u("force")})`, "Mx", "My", `Mz (${u.u("moment")})`].map((h) => <th key={h} className="text-right font-medium">{h}</th>)}</tr></thead>
       <tbody>
         {rows.map(([n, r]) => (
           <tr key={n} className="border-t border-ink-800 hover:bg-ink-800 cursor-pointer" onClick={() => set({ selection: { kind: "node", id: n } })}>
-            <td>{n} {model.nodes.find((x) => x.id === n)?.grid}</td>{r.map((v, k) => <td key={k} className="text-right">{fmt(v, 2)}</td>)}
+            <td>{n} {model.nodes.find((x) => x.id === n)?.grid}</td>{r.map((v, k) => <td key={k} className="text-right">{u.f(k < 3 ? "force" : "moment", v)}</td>)}
           </tr>
         ))}
-        <tr className="border-t-2 border-ink-600 font-semibold"><td>Σ reactions</td>{sum.map((v, k) => <td key={k} className="text-right">{k < 3 ? fmt(v, 2) : ""}</td>)}</tr>
-        <tr className="text-ink-400"><td>Σ applied</td>{res.equilibrium.applied.map((v, k) => <td key={k} className="text-right">{k < 3 ? fmt(v, 2) : ""}</td>)}</tr>
+        <tr className="border-t-2 border-ink-600 font-semibold"><td>Σ reactions</td>{sum.map((v, k) => <td key={k} className="text-right">{k < 3 ? u.f("force", v) : ""}</td>)}</tr>
+        <tr className="text-ink-400"><td>Σ applied</td>{res.equilibrium.applied.map((v, k) => <td key={k} className="text-right">{k < 3 ? u.f("force", v) : ""}</td>)}</tr>
       </tbody>
     </table>
   );
 }
 
 function Members() {
+  const u = useU();
   const { model, results, loadSel, set } = useStore();
   const [sort, setSort] = useState<"N" | "V" | "M" | "id">("M");
   if (!model || !results) return <div className="text-ink-400">Run the analysis first.</div>;
@@ -155,17 +158,17 @@ function Members() {
     <table className="w-full num">
       <thead className="text-ink-400"><tr>
         <th className="text-left font-medium cursor-pointer" onClick={() => setSort("id")}>Member</th><th className="text-left font-medium">Type</th>
-        <th className="text-right font-medium cursor-pointer" onClick={() => setSort("N")}>N max (kN)</th>
-        <th className="text-right font-medium cursor-pointer" onClick={() => setSort("V")}>V max (kN)</th>
-        <th className="text-right font-medium cursor-pointer" onClick={() => setSort("M")}>M max (kN·m)</th>
-        <th className="text-right font-medium">T (kN·m)</th><th className="text-right font-medium">|σ| max (MPa)</th><th className="text-right font-medium">|u| max (mm)</th>
+        <th className="text-right font-medium cursor-pointer" onClick={() => setSort("N")}>N max ({u.u("force")})</th>
+        <th className="text-right font-medium cursor-pointer" onClick={() => setSort("V")}>V max ({u.u("force")})</th>
+        <th className="text-right font-medium cursor-pointer" onClick={() => setSort("M")}>M max ({u.u("moment")})</th>
+        <th className="text-right font-medium">T ({u.u("moment")})</th><th className="text-right font-medium">|σ| max ({u.u("stress")})</th><th className="text-right font-medium">|u| max ({u.u("disp")})</th>
       </tr></thead>
       <tbody>
         {rows.slice(0, 300).map((r) => (
           <tr key={r.e.id} className="border-t border-ink-800 hover:bg-ink-800 cursor-pointer" onClick={() => set({ selection: { kind: "element", id: r.e.id } })}>
             <td>{r.e.id}</td><td className="font-sans text-ink-400">{r.e.label}</td>
-            <td className="text-right">{fmt(r.N, 1)}</td><td className="text-right">{fmt(r.V, 1)}</td><td className="text-right">{fmt(r.M, 1)}</td>
-            <td className="text-right">{fmt(r.T, 2)}</td><td className="text-right">{fmt(r.s, 2)}</td><td className="text-right">{fmt(r.u, 2)}</td>
+            <td className="text-right">{u.f("force", r.N)}</td><td className="text-right">{u.f("force", r.V)}</td><td className="text-right">{u.f("moment", r.M)}</td>
+            <td className="text-right">{u.f("moment", r.T)}</td><td className="text-right">{u.f("stress", r.s)}</td><td className="text-right">{u.f("disp", r.u / 1000)}</td>
           </tr>
         ))}
       </tbody>

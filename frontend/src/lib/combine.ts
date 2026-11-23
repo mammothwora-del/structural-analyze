@@ -61,6 +61,25 @@ export function combinedResult(model: Model, results: Results, sel: string): Cas
     }
     out.elements[eid] = s;
   }
+  if (base.panel_results) {
+    out.panel_results = {};
+    for (const [g, rows] of Object.entries(base.panel_results)) {
+      out.panel_results[g] = rows.map((_, k) => {
+        const v: number[] = [0, 0, 0, 0, 0, 0, 0, 0];
+        for (const c of ids) { const r = results.cases[c].panel_results?.[g]?.[k]; if (r) addArr(v, r, factors[c]); }
+        return v;
+      });
+    }
+    out.panel_transfer = {};
+    out.shell_node_force = {};
+    for (const c of ids) {
+      for (const [eid, per] of Object.entries(results.cases[c].panel_transfer ?? {})) {
+        const o = (out.panel_transfer[eid] ??= {});
+        for (const [g, f] of Object.entries(per)) addArr((o[g] ??= [0, 0, 0]), f, factors[c]);
+      }
+      for (const [n, f] of Object.entries(results.cases[c].shell_node_force ?? {})) addArr((out.shell_node_force[n] ??= [0, 0, 0]), f, factors[c]);
+    }
+  }
   let fe = 0, me = 0;
   for (const c of ids) {
     addArr(out.equilibrium.applied, results.cases[c].equilibrium.applied, factors[c]);

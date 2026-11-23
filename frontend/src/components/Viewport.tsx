@@ -12,6 +12,8 @@ import { ForceDiagrams } from "../three/Diagrams";
 import { FlowParticles, PathLabels, TributaryPanels } from "../three/LoadPath";
 import { Members } from "../three/Members";
 import { Footings, FootingPressure, GridLines, LoadsLayer, NodesLayer, ReactionsLayer, Slabs } from "../three/Overlays";
+import { ShellFlowArrows, ShellSurfaces, WallPanels } from "../three/Shells";
+import { shellScale } from "../lib/shells";
 import { Legend } from "./Legend";
 
 THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
@@ -50,7 +52,7 @@ function CameraRig({ view, nonce }: { view: ViewName; nonce: number }) {
 
 export function Viewport() {
   const s = useStore();
-  const { model, results, mode, loadSel, forceComp, deformScale, pathDir, trace, ortho, showLabels, selection, colorTransform } = s;
+  const { model, results, mode, loadSel, forceComp, deformScale, pathDir, trace, ortho, showLabels, selection, colorTransform, shellComp } = s;
   const [cam, setCam] = useState<{ view: ViewName; nonce: number }>({ view: "iso", nonce: 0 });
   const wrap = useRef<HTMLDivElement>(null);
 
@@ -59,6 +61,11 @@ export function Viewport() {
   const flows = useMemo(() => (model && usable && (mode === "loadpath") ? computeFlows(model, usable, loadSel, pathDir) : null), [model, usable, loadSel, pathDir, mode]);
   const display = useMemo(() => (model ? displayValues(mode, model, usable, loadSel, forceComp, flows, colorTransform) : null), [mode, model, usable, loadSel, forceComp, flows, colorTransform]);
   const res = useMemo(() => (model && usable ? combinedResult(model, usable, loadSel) : null), [model, usable, loadSel]);
+  const hasMesh = !!usable?.mesh;
+  const shellSlabs = usable?.slab_model === "shell";
+  const sScale = useMemo(() => (usable && res && hasMesh && mode === "stress" ? shellScale(res, usable, shellComp) : null), [usable, res, hasMesh, mode, shellComp]);
+  // slabs/walls drawn as plain panels when there is no shell mesh to show
+  const panels = (op?: number) => (<>{s.showSlabs && <Slabs model={model!} opacity={op} />}<WallPanels model={model!} /></>);
 
   const setView = (v: ViewName) => setCam((c) => ({ view: v, nonce: c.nonce + 1 }));
 
@@ -85,7 +92,7 @@ export function Viewport() {
         {(mode === "model" || mode === "loads" || !showResults) && (
           <>
             <Members model={model} results={usable} display={null} deform={0} colorMode={mode === "loads" ? "neutral" : "type"} />
-            {s.showSlabs && <Slabs model={model} />}
+            {panels()}
             <Footings model={model} results={usable} res={null} />
             {mode === "model" && <NodesLayer model={model} />}
             {mode === "loads" && <LoadsLayer model={model} results={usable} />}
@@ -96,7 +103,10 @@ export function Viewport() {
         {showResults && mode === "loadpath" && flows && display && (
           <>
             <Members model={model} results={usable} display={display} deform={0} colorMode="values" highlight={trace?.elements ?? null} highlightMax={trMax} opacity={0.55} />
-            {s.showSlabs && <TributaryPanels model={model} results={usable!} highlightSlab={selection?.kind === "slab" ? selection.id : null} />}
+            {!shellSlabs && s.showSlabs && <TributaryPanels model={model} results={usable!} highlightSlab={selection?.kind === "slab" ? selection.id : null} />}
+            {hasMesh && <ShellSurfaces model={model} results={usable!} res={res} colorMode="type" opacity={0.3} edges={false} />}
+            {hasMesh && <ShellFlowArrows model={model} results={usable!} res={res!} d={flows.d} />}
+            {!hasMesh && <WallPanels model={model} />}
             <FlowParticles model={model} results={usable!} flows={flows} trace={trace} />
             <Footings model={model} results={usable} res={res} />
             <ReactionsLayer model={model} res={res!} labels={false} />
@@ -107,7 +117,7 @@ export function Viewport() {
         {showResults && mode === "stress" && (
           <>
             <Members model={model} results={usable} display={display} deform={0} colorMode="values" />
-            {s.showSlabs && <Slabs model={model} opacity={0.12} />}
+            {hasMesh ? <ShellSurfaces model={model} results={usable!} res={res} colorMode="values" comp={shellComp} scale={sScale} /> : panels(0.12)}
             <Footings model={model} results={usable} res={res} />
           </>
         )}
@@ -116,6 +126,7 @@ export function Viewport() {
           <>
             <Members model={model} results={usable} display={null} deform={0} colorMode="neutral" opacity={0.18} />
             <Members model={model} results={usable} display={display} deform={deformScale} colorMode="values" />
+            {hasMesh ? <ShellSurfaces model={model} results={usable!} res={res} colorMode="disp" scale={display?.scale} deform={deformScale} /> : panels(0.08)}
             <Footings model={model} results={usable} res={res} />
           </>
         )}
@@ -124,6 +135,7 @@ export function Viewport() {
           <>
             <Members model={model} results={usable} display={null} deform={0} colorMode="neutral" />
             <ForceDiagrams model={model} results={usable!} res={res!} comp={forceComp} />
+            {hasMesh ? <ShellSurfaces model={model} results={usable!} res={res} colorMode="type" opacity={0.18} edges={false} /> : panels(0.1)}
             <Footings model={model} results={usable} res={res} />
           </>
         )}
@@ -131,6 +143,7 @@ export function Viewport() {
         {showResults && mode === "reactions" && (
           <>
             <Members model={model} results={usable} display={null} deform={0} colorMode="neutral" opacity={0.35} />
+            {hasMesh ? <ShellSurfaces model={model} results={usable!} res={res} colorMode="neutral" opacity={0.2} edges={false} /> : panels(0.1)}
             <Footings model={model} results={usable} res={res} colorBy="pressure" />
             <ReactionsLayer model={model} res={res!} labels={showLabels} />
             <FootingPressure model={model} res={res!} />
@@ -144,7 +157,7 @@ export function Viewport() {
 
       <ModeBar />
       <ViewTools onView={setView} wrap={wrap} />
-      {showResults && display && <Legend display={display} flows={flows} />}
+      {showResults && display && <Legend display={display} flows={flows} shellScale={sScale} />}
       {needsResults && !usable && (
         <div className="absolute inset-x-0 top-16 mx-auto w-fit rounded border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-amber-200 text-xs">
           {stale ? "The model changed since the last analysis. Run ANALYZE to update results." : "Run ANALYZE to calculate results for this mode."}
@@ -193,12 +206,14 @@ function ViewTools({ onView, wrap }: { onView: (v: ViewName) => void; wrap: Reac
 }
 
 function LoadPathBadge() {
-  const { trace, set } = useStore();
+  const { trace, set, results } = useStore();
   return (
     <div className="absolute left-1/2 -translate-x-1/2 bottom-3 flex items-center gap-3 rounded-md border border-ink-700 bg-ink-900/90 px-3 py-1.5 text-[11px] text-ink-300 backdrop-blur">
       <span><b className="text-emerald-300">CALCULATED</b> member flows from FEM internal forces</span>
       <span className="text-ink-600">|</span>
-      <span><b className="text-amber-300">ASSUMED</b> slab → beam tributary areas (no slab FEM in Phase 1)</span>
+      {results?.slab_model === "shell"
+        ? <span><b className="text-emerald-300">CALCULATED</b> slab → beam transfer and slab/wall load flux (shell FEM)</span>
+        : <span><b className="text-amber-300">ASSUMED</b> slab → beam tributary areas (slab analysis = tributary)</span>}
       {trace && (<>
         <span className="text-ink-600">|</span>
         <span>Tracing {trace.direction === "down" ? "down from" : "up to"} <b className="text-accent">{trace.start}</b> ({trace.total.toFixed(1)} kN, proportional sharing)</span>
@@ -222,7 +237,7 @@ function LoadsInfo() {
         return (
           <div key={c} className="py-1 border-b border-ink-800">
             <div className="flex justify-between"><span className="font-mono text-ink-200">{f} × {c}</span><span className="num text-ink-300">{r ? `ΣFz ${(f * r.equilibrium.applied[2]).toFixed(0)} kN` : ""}</span></div>
-            <div className="text-ink-400">{lc?.name}{lc?.self_weight ? " · incl. self-weight (members + slabs)" : ""} · {model.loads.filter((l) => l.case === c).length} load items</div>
+            <div className="text-ink-400">{lc?.name}{lc?.self_weight ? " · incl. self-weight (members, slabs, walls)" : ""} · {model.loads.filter((l) => l.case === c).length} load items</div>
           </div>
         );
       })}

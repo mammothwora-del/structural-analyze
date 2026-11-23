@@ -2,8 +2,10 @@ import { combinedResult } from "./combine";
 import type { FlowData } from "./loadpath";
 import type { Scale } from "./colormap";
 import type { CaseResult, ForceComp, Mode, Model, Results } from "./types";
+import type { Kind } from "./units";
 
 export const UNITS: Record<ForceComp, string> = { N: "kN", Vy: "kN", Vz: "kN", T: "kN·m", My: "kN·m", Mz: "kN·m" };
+export const COMP_KIND: Record<ForceComp, Kind> = { N: "force", Vy: "force", Vz: "force", T: "moment", My: "moment", Mz: "moment" };
 export const COMP_LABEL: Record<ForceComp, string> = {
   N: "Axial force N", Vy: "Shear Vy (minor)", Vz: "Shear Vz (major)", T: "Torsion T", My: "Moment My (major)", Mz: "Moment Mz (minor)",
 };
@@ -35,7 +37,7 @@ function displayValuesInner(mode: Mode, model: Model, results: Results | null, s
   if (mode === "loadpath" && flows) {
     for (const [eid, f] of Object.entries(flows.flow)) { values[eid] = f.map(Math.abs); }
     max = flows.maxThrough;
-    return { values, res, scale: { min: 0, max, label: "Load carried along path |F·d|", unit: "kN", note: "From element internal forces (FEM)" } };
+    return { values, res, scale: { min: 0, max, label: "Load carried along path |F·d|", unit: "kN", kind: "force", note: "From element internal forces (FEM)" } };
   }
   if (mode === "stress") {
     for (const [eid, st] of Object.entries(res.elements)) {
@@ -48,20 +50,20 @@ function displayValuesInner(mode: Mode, model: Model, results: Results | null, s
   }
   if (mode === "deformation") {
     for (const [eid, st] of Object.entries(res.elements)) {
-      values[eid] = st.disp.map((d) => Math.hypot(d[0], d[1], d[2]) * 1000);
+      values[eid] = st.disp.map((d) => Math.hypot(d[0], d[1], d[2]));
       max = Math.max(max, ...values[eid]);
     }
-    return { values, res, scale: { min: 0, max, label: "Global deformation |u|", unit: "mm", note: "FEM nodal + exact curvature integration along members" } };
+    return { values, res, scale: { min: 0, max, label: "Global deformation |u|", unit: "mm", kind: "disp", note: "FEM nodal + exact curvature integration along members" } };
   }
   if (mode === "forces") {
     for (const [eid, st] of Object.entries(res.elements)) {
       values[eid] = st[comp].map(Math.abs);
       max = Math.max(max, ...values[eid]);
     }
-    return { values, res, scale: { min: 0, max, label: `|${COMP_LABEL[comp]}|`, unit: UNITS[comp] } };
+    return { values, res, scale: { min: 0, max, label: `|${COMP_LABEL[comp]}|`, unit: UNITS[comp], kind: COMP_KIND[comp] } };
   }
   if (mode === "reactions") {
-    return { values, res, scale: { min: 0, max: 0, label: "Soil pressure (rigid footing)", unit: "kN/m²" } };
+    return { values, res, scale: { min: 0, max: 0, label: "Soil pressure (rigid footing)", unit: "kN/m²", kind: "soil" } };
   }
   return { values, res, scale: { min: 0, max: 0, label: "", unit: "" } };
 }

@@ -37,9 +37,25 @@ DEFAULTS = {
     "wind_pressure": 1.0,            # kN/m2 net, 0 = no wind case
     "seismic_cs": 0.08,              # 0 = no seismic case
     "standard": "EN1990",
+    "slab_model": "shell",           # 'shell' (FEM plate/shell) | 'tributary' (45-degree assumption)
+    "mesh_size": 1.0,                # m, target shell element size
+    "walls": "none",                 # 'none' | 'x' (walls in the XZ plane on the two outer Y lines) | 'xy'
+    "wall_thickness": 0.2,
 }
 
 COMBOS = {
+    # Thai practice, strength design (EIT 1008-38 / Ministerial Regulation load factors based on ACI 318-95):
+    # U = 1.4D + 1.7L ; U = 0.75(1.4D + 1.7L + 1.7W) ; U = 0.9D + 1.3W.
+    # Seismic (DPT 1301/1302-61 style, strength-level E): 1.2D + 1.0L + 1.0E ; 0.9D + 1.0E
+    # (the vertical term 0.2 S_DS D is not included). Verify against the edition in force for the project.
+    "TH": [
+        ("TH1", "1.4D + 1.7L", {"DL": 1.4, "SDL": 1.4, "LL": 1.7}),
+        ("TH2", "0.75(1.4D + 1.7L + 1.7W)", {"DL": 1.05, "SDL": 1.05, "LL": 1.275, "WX": 1.275}),
+        ("TH3", "0.9D + 1.3W", {"DL": 0.9, "SDL": 0.9, "WX": 1.3}),
+        ("TH4", "1.2D + 1.0L + 1.0E (DPT 1301/1302)", {"DL": 1.2, "SDL": 1.2, "LL": 1.0, "EX": 1.0}),
+        ("TH5", "0.9D + 1.0E (DPT 1301/1302)", {"DL": 0.9, "SDL": 0.9, "EX": 1.0}),
+        ("THS", "D + L (service)", {"DL": 1.0, "SDL": 1.0, "LL": 1.0}),
+    ],
     "EN1990": [
         ("ULS1", "1.35G", {"DL": 1.35, "SDL": 1.35}),
         ("ULS2", "1.35G + 1.5Q", {"DL": 1.35, "SDL": 1.35, "LL": 1.5}),
@@ -172,8 +188,35 @@ def generate_building(params: dict | None = None) -> dict:
                 corners = [node_at[(round(a, 6), round(c, 6), lv)], node_at[(round(b, 6), round(c, 6), lv)],
                            node_at[(round(b, 6), round(d, 6), lv)], node_at[(round(a, 6), round(d, 6), lv)]]
                 slabs.append({"id": f"S{len(slabs) + 1}", "corners": corners, "thickness": p["slab_thickness"],
+                              "density": MATERIALS.get(p["column"].get("material", ""), {}).get("density", 25.0),
+                              "material": p["column"].get("material", "C30/37"),
                               "span_type": p["slab_span_type"], "level": lv,
                               "label": f"Slab L{lv} x[{a:g},{b:g}] y[{c:g},{d:g}]"})
+
+    # Shear walls (shell elements): in the middle bay of the outer frames, full height.
+    walls = []
+    wmode = p.get("walls", "none")
+    wmat = p["column"].get("material", "C30/37")
+    wdens = MATERIALS.get(wmat, {}).get("density", 25.0)
+
+    def wall(c4, lv, label):
+        walls.append({"id": f"W{len(walls) + 1}", "corners": c4, "thickness": p["wall_thickness"], "material": wmat,
+                      "density": wdens, "level": lv, "base_support": p["support"] if lv == 1 else None, "label": label})
+
+    if wmode in ("x", "xy") and len(xs) > 1:
+        k = (len(xs) - 2) // 2
+        a, b = xs[k], xs[k + 1]
+        for y in (ys[0], ys[-1]):
+            for lv in range(1, nlev + 1):
+                n = lambda x, l: node_at[(round(x, 6), round(y, 6), l)]
+                wall([n(a, lv - 1), n(b, lv - 1), n(b, lv), n(a, lv)], lv, f"Wall y={y:g} x[{a:g},{b:g}] storey {lv}")
+    if wmode == "xy" and len(ys) > 1:
+        k = (len(ys) - 2) // 2
+        a, b = ys[k], ys[k + 1]
+        for x in (xs[0], xs[-1]):
+            for lv in range(1, nlev + 1):
+                n = lambda y, l: node_at[(round(x, 6), round(y, 6), l)]
+                wall([n(a, lv - 1), n(b, lv - 1), n(b, lv), n(a, lv)], lv, f"Wall x={x:g} y[{a:g},{b:g}] storey {lv}")
 
     supports = []
     for x in xs:
@@ -209,7 +252,7 @@ def generate_building(params: dict | None = None) -> dict:
     if p["seismic_cs"]:
         cases.append({"id": "EX", "name": f"Seismic +X (ELF, Cs={p['seismic_cs']})", "type": "seismic"})
         # seismic weight per level: slabs (self + SDL) + beams + half columns above/below
-        W = _level_weights(p, xs, ys, zs, sections, elements, slabs, nodes)
+        W = _level_weights(p, xs, ys, zs, sections, elements, slabs, nodes, walls)
         sum_wh = sum(W[lv] * zs[lv] for lv in range(1, nlev + 1))
         V = p["seismic_cs"] * sum(W[1:])
         ncol = len(xs) * len(ys)
@@ -226,6 +269,7 @@ def generate_building(params: dict | None = None) -> dict:
         "units": {"force": "kN", "length": "m"},
         "settings": {"standard": p["standard"], "allowable_bearing": p["allowable_bearing"],
                      "stress_limit_concrete": 0.6 * MATERIALS.get(p["column"].get("material", "C30/37"), {}).get("fck", 30) * 1000,
+                     "slab_model": p.get("slab_model", "shell"), "mesh_size": float(p.get("mesh_size", 1.0)),
                      "stress_limit_steel": 355000.0},
         "grid": {"x": [{"name": n, "pos": v} for n, v in zip(xg, xs)],
                  "y": [{"name": n, "pos": v} for n, v in zip(yg, ys)],
@@ -235,6 +279,7 @@ def generate_building(params: dict | None = None) -> dict:
         "nodes": nodes,
         "elements": elements,
         "slabs": slabs,
+        "walls": walls,
         "supports": supports,
         "load_cases": cases,
         "loads": loads,
@@ -252,17 +297,17 @@ def _sec_name(s):
     return s.get("name", "section")
 
 
-def _level_weights(p, xs, ys, zs, sections, elements, slabs, nodes):
+def _level_weights(p, xs, ys, zs, sections, elements, slabs, nodes, walls=()):
     nlev = len(zs) - 1
     W = [0.0] * (nlev + 1)
     area = (xs[-1]) * (ys[-1])
     for lv in range(1, nlev + 1):
-        W[lv] += area * (p["slab_thickness"] * 25.0 + p["sdl"])
+        W[lv] += area * (p["slab_thickness"] * MATERIALS.get(p["column"].get("material", ""), {}).get("density", 25.0) + p["sdl"])
     zlev = {n["id"]: n["level"] for n in nodes}
     xyz = {n["id"]: (n["x"], n["y"], n["z"]) for n in nodes}
     for e in elements:
         s = sections[e["section"]]
-        w = section_properties(s).A * MATERIALS[s["material"]]["density"]
+        w = section_properties(s).A * MATERIALS.get(s["material"], {"density": 25.0})["density"]
         a, b = xyz[e["i"]], xyz[e["j"]]
         L = sum((u - v) ** 2 for u, v in zip(a, b)) ** 0.5
         if e["type"] == "column":
@@ -271,4 +316,13 @@ def _level_weights(p, xs, ys, zs, sections, elements, slabs, nodes):
                     W[zlev[n]] += w * L / 2
         else:
             W[e["level"]] += w * L
+    for wl in walls:
+        c = [xyz[n] for n in wl["corners"]]
+        width = sum((u - v) ** 2 for u, v in zip(c[0], c[1])) ** 0.5
+        height = abs(c[2][2] - c[1][2])
+        wt = width * height * wl["thickness"] * wl["density"]
+        lv = wl["level"]
+        W[lv] += wt / 2
+        if lv - 1 > 0:
+            W[lv - 1] += wt / 2
     return W
