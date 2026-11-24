@@ -28,6 +28,7 @@ import math
 import numpy as np
 
 from .slabs import CONCRETE_DENSITY
+from .solver import element_releases
 
 TOL = 1e-6
 
@@ -179,9 +180,14 @@ def build_fe_model(model: dict, slabs_as_shells: bool):
         hits.sort()
         chain = [(0.0, e["i"])] + hits + [(L, e["j"])]
         subs = []
+        ri, rj = element_releases(e)
+        nsub = len(chain) - 1
         for k, ((sa, na), (sb, nb)) in enumerate(zip(chain[:-1], chain[1:])):
             sub = {**copy.deepcopy(e), "id": f"{e['id']}~{k + 1}", "i": na, "j": nb, "parent": e["id"],
-                   "n_stations": max(3, math.ceil(11 * (sb - sa) / L) + 1), "n_dense": 9}
+                   "n_stations": max(3, math.ceil(11 * (sb - sa) / L) + 1), "n_dense": 9,
+                   # end releases stay at the parent's ends only
+                   "releases": {"i": ri if k == 0 else [0] * 6, "j": rj if k == nsub - 1 else [0] * 6}}
+            sub.pop("truss", None)
             new_elements.append(sub)
             subs.append({"id": sub["id"], "s0": sa, "s1": sb, "j": nb})
         split[e["id"]] = {"L": L, "subs": subs}

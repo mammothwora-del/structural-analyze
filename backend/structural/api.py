@@ -9,7 +9,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .analysis import analyze
-from .generator import DEFAULTS, generate_building
+from .generator import DEFAULTS, generate as generate_structure
+from .structures import SPACE_DEFAULTS, TRUSS_DEFAULTS, WAREHOUSE_DEFAULTS
 from .sections import MATERIALS, section_properties
 from .solver import ModelError
 
@@ -24,13 +25,14 @@ def health():
 
 @app.get("/api/defaults")
 def defaults():
-    return {"generator": DEFAULTS, "materials": MATERIALS}
+    return {"generator": DEFAULTS, "truss2d": TRUSS_DEFAULTS, "warehouse": WAREHOUSE_DEFAULTS,
+            "space_truss": SPACE_DEFAULTS, "materials": MATERIALS}
 
 
 @app.post("/api/generate")
 def generate(params: dict | None = None):
     try:
-        return generate_building(params or {})
+        return generate_structure(params or {})
     except (KeyError, ValueError, IndexError) as exc:
         raise HTTPException(400, f"Invalid generator parameters: {exc}") from exc
 

@@ -13,6 +13,7 @@ import { FlowParticles, PathLabels, TributaryPanels } from "../three/LoadPath";
 import { Members } from "../three/Members";
 import { Footings, FootingPressure, GridLines, LoadsLayer, NodesLayer, ReactionsLayer, Slabs } from "../three/Overlays";
 import { ShellFlowArrows, ShellSurfaces, WallPanels } from "../three/Shells";
+import { Hinges } from "../three/Hinges";
 import { shellScale } from "../lib/shells";
 import { Legend } from "./Legend";
 
@@ -95,6 +96,7 @@ export function Viewport() {
             {panels()}
             <Footings model={model} results={usable} res={null} />
             {mode === "model" && <NodesLayer model={model} />}
+            {(mode === "model" || mode === "loads") && <Hinges model={model} />}
             {mode === "loads" && <LoadsLayer model={model} results={usable} />}
           </>
         )}
@@ -135,6 +137,7 @@ export function Viewport() {
           <>
             <Members model={model} results={usable} display={null} deform={0} colorMode="neutral" />
             <ForceDiagrams model={model} results={usable!} res={res!} comp={forceComp} />
+            <Hinges model={model} />
             {hasMesh ? <ShellSurfaces model={model} results={usable!} res={res} colorMode="type" opacity={0.18} edges={false} /> : panels(0.1)}
             <Footings model={model} results={usable} res={res} />
           </>

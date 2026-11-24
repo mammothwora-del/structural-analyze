@@ -73,7 +73,7 @@ export const useStore = create<State>((set, get) => ({
     try {
       const m = await api.generate(params);
       set({ model: m, results: null, resultsStale: false, selection: null, trace: null, isolated: null, mode: "model", history: [],
-        log: [...get().log, `Generated building: ${m.elements.length} members, ${m.slabs.length} slab panels, ${m.walls?.length ?? 0} walls, ${m.supports.length} supports.`] });
+        log: [...get().log, `New model "${m.name}": ${m.elements.length} members${m.slabs.length ? `, ${m.slabs.length} slab panels` : ""}${m.walls?.length ? `, ${m.walls.length} walls` : ""}, ${m.supports.length} supports.`] });
     } catch (e) {
       set({ error: String((e as Error).message) });
     } finally {

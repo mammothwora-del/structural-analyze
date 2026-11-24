@@ -13,10 +13,22 @@ export const TYPE_COLORS: Record<string, string> = {
   main: "#d6a45e",
   secondary: "#b68fe0",
   brace: "#6fd3b0",
+  chord: "#e0b25a",
+  web: "#e58f6f",
+  purlin: "#9fb7c9",
+};
+
+export const TYPE_LABELS: Record<string, string> = {
+  column: "Columns", main: "Main beams", secondary: "Secondary beams", brace: "Bracing & ties",
+  chord: "Truss chords", web: "Truss webs", purlin: "Purlins & eave struts",
 };
 
 export function elementColorKey(e: Element) {
-  return e.type === "column" ? "column" : e.type === "brace" ? "brace" : e.role === "secondary" ? "secondary" : "main";
+  if (e.type === "column") return "column";
+  if (e.type === "brace") return "brace";
+  if (e.type === "truss") return e.role === "chord" ? "chord" : "web";
+  if (e.role === "purlin" || e.role === "eave") return "purlin";
+  return e.role === "secondary" ? "secondary" : "main";
 }
 
 export function useVisibleElements(model: Model) {

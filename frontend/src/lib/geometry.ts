@@ -45,6 +45,8 @@ export function sectionDims(model: Model, el: Element): { b: number; h: number; 
   if (s.shape === "rect") return { b: s.b!, h: s.h!, shape: "rect" };
   if (s.shape === "I") return { b: s.bf!, h: s.h!, shape: "I" };
   if (s.shape === "circle") return { b: s.d!, h: s.d!, shape: "circle" };
+  if (s.shape === "pipe") return { b: s.d!, h: s.d!, shape: "circle" };
+  if (s.shape === "box") return { b: s.b!, h: s.h!, shape: "rect" };
   return { b: s.b ?? 0.3, h: s.h ?? 0.3, shape: "rect" };
 }
 
@@ -76,3 +78,13 @@ export function interp(xs: number[], ys: number[], x: number) {
   }
   return ys[ys.length - 1];
 }
+
+export const TRUSS_RELEASES: [number[], number[]] = [[0, 0, 0, 0, 1, 1], [0, 0, 0, 1, 1, 1]];
+/** Released local DOFs at ends i and j (mirrors backend solver.element_releases). */
+export function elementReleases(e: import("./types").Element): [number[], number[]] {
+  if (e.releases) return [e.releases.i ?? [0, 0, 0, 0, 0, 0], e.releases.j ?? [0, 0, 0, 0, 0, 0]];
+  if (e.truss || e.type === "truss") return TRUSS_RELEASES;
+  return [[0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0]];
+}
+/** True when bending moments are released at an end (a hinge). */
+export const isHinged = (r: number[]) => !!(r[4] && r[5]);

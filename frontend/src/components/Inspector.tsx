@@ -4,10 +4,11 @@ import { COMP_LABEL, fmt, stressLimit, UNITS } from "../lib/display";
 import { footingPressure } from "../lib/footing";
 import { computeFlows, elementTransfers, trace } from "../lib/loadpath";
 import { surfaceStress } from "../lib/shells";
-import type { ForceComp, Load, Model, Results, Stations } from "../lib/types";
+import type { ForceComp, Load, Model, Results, Stations, Support } from "../lib/types";
 import { useStore, useU } from "../store";
 import type { UnitsApi } from "../lib/units";
 import { COMP_KIND } from "../lib/display";
+import { elementReleases, isHinged } from "../lib/geometry";
 
 const Row = ({ k, v, unit }: { k: React.ReactNode; v: React.ReactNode; unit?: string }) => (
   <div className="flex justify-between gap-2 py-0.5 border-b border-ink-800/80">
@@ -72,6 +73,61 @@ function MiniDiagram({ st, comp, u }: { st: Stations; comp: ForceComp; u: UnitsA
   );
 }
 
+/** Readable support kind; custom restraint sets list the fixed DOFs. */
+function supportLabel(s: Support) {
+  if (!s.dofs) return s.type ?? "fixed";
+  const names = ["ux", "uy", "uz", "rx", "ry", "rz"].filter((_, k) => s.dofs![k]);
+  return (s.lateral ? "lateral restraint " : "restraint ") + names.join(",");
+}
+const Z6 = [0, 0, 0, 0, 0, 0];
+const PIN = [0, 0, 0, 0, 1, 1];
+const RELEASE_PRESETS: { key: string; label: string; i: number[]; j: number[]; truss?: boolean }[] = [
+  { key: "rigid", label: "Rigid", i: Z6, j: Z6 },
+  { key: "pin_i", label: "Pin i", i: PIN, j: Z6 },
+  { key: "pin_j", label: "Pin j", i: Z6, j: PIN },
+  { key: "pin_both", label: "Pin both", i: PIN, j: PIN },
+  { key: "truss", label: "Truss", i: PIN, j: [0, 0, 0, 1, 1, 1], truss: true },
+];
+function releaseKey(model: Model, ids: string[]) {
+  const keys = ids.map((id) => {
+    const e = model.elements.find((x) => x.id === id);
+    if (!e) return "";
+    if (e.truss || e.type === "truss") return "truss";
+    const [ri, rj] = elementReleases(e);
+    const hi = isHinged(ri), hj = isHinged(rj);
+    const other = [...ri, ...rj].some((v, k) => v && !(k % 6 === 4 || k % 6 === 5));
+    if (other) return "custom";
+    return hi && hj ? "pin_both" : hi ? "pin_i" : hj ? "pin_j" : "rigid";
+  });
+  return keys.every((k) => k === keys[0]) ? keys[0] : "mixed";
+}
+/** End-release editor: rigid, pinned ends (moment released) or truss (axial only). Applied to one or many members. */
+function EndReleases({ ids }: { ids: string[] }) {
+  const { model, editModel } = useStore();
+  if (!model) return null;
+  const cur = releaseKey(model, ids);
+  return (
+    <Section title="End releases">
+      <div className="flex flex-wrap gap-1">
+        {RELEASE_PRESETS.map((p) => (
+          <button key={p.key} className={`btn !px-2 ${cur === p.key ? "!bg-sky-600/40 !text-sky-100" : ""}`}
+            onClick={() => editModel((m) => {
+              for (const e of m.elements) {
+                if (!ids.includes(e.id)) continue;
+                if (p.truss) { e.truss = true; delete e.releases; }
+                else { delete e.truss; if (e.type === "truss") e.type = "brace"; if (p.key === "rigid") delete e.releases; else e.releases = { i: [...p.i], j: [...p.j] }; }
+              }
+            })}>{p.label}</button>
+        ))}
+      </div>
+      <div className="text-[11px] text-ink-400 mt-1">
+        {cur === "custom" ? "Custom releases set in the model file. " : cur === "mixed" ? "Selected members have different releases. " : ""}
+        Pin releases bending moments (My, Mz) at that end. Truss carries axial force only; member loads on a truss member still bend it between its ends. Re-run ANALYZE after changing.
+      </div>
+    </Section>
+  );
+}
+
 function ElementPanel({ model, results, id }: { model: Model; results: Results | null; id: string }) {
   const u = useU();
   const { loadSel, set, editModel, pathDir } = useStore();
@@ -106,7 +162,7 @@ function ElementPanel({ model, results, id }: { model: Model; results: Results |
           <div className="text-lg font-semibold text-ink-200">{el.id}</div>
           <div className="text-ink-400 text-xs">{el.label}</div>
         </div>
-        <span className="tag bg-ink-700 text-ink-200 uppercase">{el.type}{el.role && el.type === "beam" ? ` · ${el.role}` : ""}</span>
+        <span className="tag bg-ink-700 text-ink-200 uppercase">{el.truss ? "truss" : el.type}{el.role && (el.type === "beam" || el.truss) ? ` · ${el.role}` : ""}</span>
       </div>
       <Section title="Properties">
         <Row k="Material" v={model.materials[sec?.material]?.name ?? sec?.material} />
@@ -124,8 +180,9 @@ function ElementPanel({ model, results, id }: { model: Model; results: Results |
           <Row k="Iy (major) / Iz" v={`${u.f("inertia", info.props.Iy, 0)} / ${u.f("inertia", info.props.Iz, 0)}`} unit={u.u("inertia")} />
           <Row k="E" v={u.f("modulus", info.E / 1000, 0)} unit={u.u("modulus")} />
         </>}
-        <Row k="Supports at ends" v={supports.length ? supports.map((s) => `${s!.node} (${s!.type})`).join(", ") : "none"} />
+        <Row k="Supports at ends" v={supports.length ? supports.map((s) => `${s!.node} (${supportLabel(s!)})`).join(", ") : "none"} />
       </Section>
+      <EndReleases ids={[id]} />
 
       {!results && <div className="mt-4 text-xs text-ink-400">Run ANALYZE to see internal forces, stresses, displacements and load transfer.</div>}
 
@@ -259,14 +316,15 @@ function NodePanel({ model, results, id }: { model: Model; results: Results | nu
       <Section title="Coordinates">
         <Row k="X, Y, Z" v={`${u.f("length", n.x, 3)}, ${u.f("length", n.y, 3)}, ${u.f("length", n.z, 3)}`} unit={u.u("length")} />
         <div className="flex justify-between py-0.5 border-b border-ink-800/80"><span className="text-ink-400">Support</span>
-          <select className="input !w-32" value={sup?.type ?? "none"} onChange={(e) => editModel((m) => {
+          <select className="input !w-32" value={sup ? (sup.dofs ? "custom" : sup.type ?? "fixed") : "none"} onChange={(e) => editModel((m) => {
             const v = e.target.value;
             m.supports = m.supports.filter((s) => s.node !== id || v !== "none");
             const s = m.supports.find((s) => s.node === id);
-            if (s && v !== "none") s.type = v as "fixed";
+            if (s && v !== "none") { if (v === "custom") return; s.type = v as "fixed"; delete s.dofs; delete s.lateral; }
             else if (!s && v !== "none") m.supports.push({ node: id, type: v as "fixed", footing: { B: 2, L: 2, t: 0.6 } });
           })}>
             <option value="none">none</option><option value="fixed">fixed</option><option value="pinned">pinned</option><option value="roller">roller</option>
+            {sup?.dofs && <option value="custom">{supportLabel(sup)}</option>}
           </select>
         </div>
       </Section>
@@ -416,6 +474,7 @@ function MultiPanel({ model }: { model: Model }) {
           {Object.entries(model.sections).map(([k, s]) => <option key={k} value={k}>{k} – {s.name}</option>)}
         </select>
       </Section>
+      {els.length > 0 && <EndReleases ids={els} />}
       <AddMemberLoad ids={els} />
       <div className="mt-4 flex gap-1.5">
         <button className="btn" onClick={() => set({ isolated: els })}>Isolate</button>

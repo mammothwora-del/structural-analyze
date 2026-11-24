@@ -62,7 +62,7 @@ export function Footings({ model, results, res, colorBy }: { model: Model; resul
     <group>
       {model.supports.map((s) => {
         const p = pos.get(s.node);
-        if (!p) return null;
+        if (!p || s.lateral) return null;
         const f = s.footing;
         const fixed = (s.type ?? "fixed") === "fixed";
         let color = "#6b7a8c";
