@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Section } from "../lib/types";
 import { useStore, useU } from "../store";
-import { TYPE_COLORS } from "../three/Members";
+import { elementColorKey, TYPE_COLORS, TYPE_LABELS } from "../three/Members";
 
 const list = (s: string) => s.split(/[,\s]+/).filter(Boolean).map(Number).filter((x) => x > 0);
 
@@ -12,7 +12,7 @@ export function LeftSidebar() {
       <div className="flex border-b border-ink-800">
         {(["generate", "model", "sections"] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)} className={`flex-1 py-2 text-[11px] uppercase tracking-wider font-semibold ${tab === t ? "text-accent border-b-2 border-accent" : "text-ink-400 hover:text-ink-200"}`}>
-            {t === "generate" ? "Building" : t === "model" ? "Model" : "Sections"}
+            {t === "generate" ? "Generate" : t === "model" ? "Model" : "Sections"}
           </button>
         ))}
       </div>
@@ -51,14 +51,149 @@ const OCCUPANCY: Record<string, { label: string; q: number }[]> = {
 const MATS: Record<string, string[]> = { TH: ["TH-fc240", "TH-fc280", "TH-fc320", "TH-fc210", "TH-fc180"], EN1990: ["C30/37", "C25/30", "C40/50"], ASCE7: ["C30/37", "C25/30", "C40/50"] };
 const KGM2 = 0.00980665; // kN/m² per kg/m²
 
+type StructType = "building" | "truss2d" | "warehouse" | "space_truss";
+const STRUCT_LABEL: Record<StructType, string> = {
+  building: "Multi-storey building (frame, slabs, walls, bracing)",
+  truss2d: "Planar truss (Pratt, Howe, Warren, pitched)",
+  warehouse: "Steel warehouse with roof trusses",
+  space_truss: "Space truss roof (double-layer grid)",
+};
+
 function Generator() {
+  const [type, setType] = useState<StructType>("building");
+  return (
+    <div>
+      <div className="panel-title mb-2">Structure type</div>
+      <select className="input mb-3" value={type} onChange={(e) => setType(e.target.value as StructType)}>
+        {(Object.keys(STRUCT_LABEL) as StructType[]).map((t) => <option key={t} value={t}>{STRUCT_LABEL[t]}</option>)}
+      </select>
+      {type === "building" && <BuildingGen />}
+      {type === "truss2d" && <TrussGen />}
+      {type === "warehouse" && <WarehouseGen />}
+      {type === "space_truss" && <SpaceGen />}
+    </div>
+  );
+}
+
+const STD_OPTIONS = (
+  <>
+    <option value="TH">Thai — EIT 1008 / Ministerial Regulation, DPT 1301/1302</option>
+    <option value="EN1990">Eurocode EN 1990</option>
+    <option value="ASCE7">ASCE 7 LRFD</option>
+  </>
+);
+const STEEL_FOR: Record<string, string> = { TH: "SS400", EN1990: "S355", ASCE7: "A992" };
+
+/** Number input bound to an SI state value, shown in the selected unit system. */
+function useSI<T extends Record<string, unknown>>(init: T) {
+  const u = useU();
+  const [p, setP] = useState(init);
+  const num = (k: keyof T, kind: Parameters<typeof u.c>[0] | null, step?: number) => (
+    <input className="input" type="number" step={step ?? "any"} value={kind ? +u.c(kind, p[k] as number).toFixed(4) : (p[k] as number)}
+      onChange={(e) => setP({ ...p, [k]: kind ? u.si(kind, +e.target.value) : +e.target.value })} />
+  );
+  return { p, setP, num, u };
+}
+
+function GenNote({ children }: { children: React.ReactNode }) {
+  return <div className="text-[10px] text-ink-400 leading-snug mb-2">{children}</div>;
+}
+
+function TrussGen() {
+  const { generate, busy } = useStore();
+  const { p, setP, num, u } = useSI({ truss_type: "pratt", span: 18, height: 2, panels: 6, eave_depth: 0, spacing: 6, sdl: 0.5, live_load: 0.5, standard: "EN1990",
+    chB: 0.15, chT: 0.008, wD: 0.0889, wT: 0.005 });
+  const L = u.u("length"), D = u.u("dim");
+  return (
+    <div>
+      <F label="Standard (combinations, steel)"><select className="input" value={p.standard} onChange={(e) => setP({ ...p, standard: e.target.value })}>{STD_OPTIONS}</select></F>
+      <F label="Truss type">
+        <select className="input" value={p.truss_type} onChange={(e) => setP({ ...p, truss_type: e.target.value })}>
+          <option value="pratt">Pratt (diagonals in tension)</option><option value="howe">Howe (diagonals in compression)</option>
+          <option value="warren">Warren (no verticals)</option><option value="pitched">Pitched roof truss (gable)</option>
+        </select>
+      </F>
+      <div className="grid grid-cols-2 gap-x-2">
+        <F label={`Span (${L})`}>{num("span", "length")}</F>
+        <F label={p.truss_type === "pitched" ? `Rise (${L})` : `Depth (${L})`}>{num("height", "length")}</F>
+        <F label="Panels">{num("panels", null, 1)}</F>
+        {p.truss_type === "pitched" && <F label={`Depth at supports (${L})`}>{num("eave_depth", "length")}</F>}
+        <F label={`Truss spacing (${L})`}>{num("spacing", "length")}</F>
+        <F label={`Roof SDL (${u.u("areaLoad")})`}>{num("sdl", "areaLoad")}</F>
+        <F label={`Roof live (${u.u("areaLoad")})`}>{num("live_load", "areaLoad")}</F>
+        <F label={`Chord box b=h (${D})`}>{num("chB", "dim")}</F>
+        <F label={`Chord wall t (${D})`}>{num("chT", "dim")}</F>
+        <F label={`Web tube d (${D})`}>{num("wD", "dim")}</F>
+        <F label={`Web wall t (${D})`}>{num("wT", "dim")}</F>
+      </div>
+      <GenNote>Pin-jointed members (axial force only under nodal loads). Roof load = q × spacing, lumped at the top-chord panel points by tributary length (assumed). Left support pinned, right roller; out-of-plane restraint assumed at every node. Steel: {STEEL_FOR[p.standard]}.</GenNote>
+      <button className="btn-primary w-full" disabled={busy} onClick={() => generate({ type: "truss2d", truss_type: p.truss_type, span: p.span, height: p.height, panels: Math.round(p.panels),
+        eave_depth: p.eave_depth, spacing: p.spacing, sdl: p.sdl, live_load: p.live_load, standard: p.standard,
+        chord: { shape: "box", b: p.chB, h: p.chB, t: p.chT }, web: { shape: "pipe", d: p.wD, t: p.wT } })}>Generate truss</button>
+    </div>
+  );
+}
+
+function WarehouseGen() {
+  const { generate, busy } = useStore();
+  const { p, setP, num, u } = useSI({ span: 20, bay: 6, n_bays: 5, eave_height: 6, rise: 2, eave_depth: 1, panels: 8, support: "fixed", sdl: 0.3, live_load: 0.5,
+    wind_pressure: 0.8, standard: "EN1990", roof_bracing: true, wall_bracing: true });
+  const L = u.u("length"), A = u.u("areaLoad");
+  return (
+    <div>
+      <F label="Standard (combinations, steel)"><select className="input" value={p.standard} onChange={(e) => setP({ ...p, standard: e.target.value })}>{STD_OPTIONS}</select></F>
+      <div className="grid grid-cols-2 gap-x-2">
+        <F label={`Span (${L})`}>{num("span", "length")}</F>
+        <F label={`Bay spacing (${L})`}>{num("bay", "length")}</F>
+        <F label="Number of bays">{num("n_bays", null, 1)}</F>
+        <F label={`Eave height (${L})`}>{num("eave_height", "length")}</F>
+        <F label={`Roof rise (${L})`}>{num("rise", "length")}</F>
+        <F label={`Truss depth at eave (${L})`}>{num("eave_depth", "length")}</F>
+        <F label="Truss panels">{num("panels", null, 1)}</F>
+        <F label="Column bases"><select className="input" value={p.support} onChange={(e) => setP({ ...p, support: e.target.value })}><option value="fixed">fixed</option><option value="pinned">pinned</option></select></F>
+        <F label={`Roof SDL (${A})`}>{num("sdl", "areaLoad")}</F>
+        <F label={`Roof live (${A})`}>{num("live_load", "areaLoad")}</F>
+        <F label={`Wind net (${A})`}>{num("wind_pressure", "areaLoad")}</F>
+      </div>
+      <label className="flex items-center gap-2 text-[11px] mb-1"><input type="checkbox" className="accent-sky-400" checked={p.roof_bracing} onChange={(e) => setP({ ...p, roof_bracing: e.target.checked })} />Roof bracing in end bays</label>
+      <label className="flex items-center gap-2 text-[11px] mb-2"><input type="checkbox" className="accent-sky-400" checked={p.wall_bracing} onChange={(e) => setP({ ...p, wall_bracing: e.target.checked })} />Wall bracing in end bays</label>
+      <GenNote>Pitched Pratt trusses on steel columns, simply supported purlins, eave struts, bottom-chord ties with vertical bracing in the end bays. Roof sheeting spans one way to the purlins (assumed). Untick a bracing option to see the stability check report the mechanism. Steel: {STEEL_FOR[p.standard]}.</GenNote>
+      <button className="btn-primary w-full" disabled={busy} onClick={() => generate({ type: "warehouse", ...p, n_bays: Math.round(p.n_bays), panels: Math.round(p.panels) })}>Generate warehouse</button>
+    </div>
+  );
+}
+
+function SpaceGen() {
+  const { generate, busy } = useStore();
+  const { p, setP, num, u } = useSI({ nx: 8, ny: 6, module: 2, depth: 1.5, column_height: 5, supports: "perimeter", sdl: 0.5, live_load: 0.75, standard: "EN1990" });
+  const L = u.u("length"), A = u.u("areaLoad");
+  return (
+    <div>
+      <F label="Standard (combinations, steel)"><select className="input" value={p.standard} onChange={(e) => setP({ ...p, standard: e.target.value })}>{STD_OPTIONS}</select></F>
+      <div className="grid grid-cols-2 gap-x-2">
+        <F label="Modules in X">{num("nx", null, 1)}</F>
+        <F label="Modules in Y">{num("ny", null, 1)}</F>
+        <F label={`Module size (${L})`}>{num("module", "length")}</F>
+        <F label={`Grid depth (${L})`}>{num("depth", "length")}</F>
+        <F label={`Column height (${L})`} hint="0 = on supports">{num("column_height", "length")}</F>
+        <F label="Supports"><select className="input" value={p.supports} onChange={(e) => setP({ ...p, supports: e.target.value })}><option value="perimeter">perimeter (every 2nd node)</option><option value="corners">4 corners</option></select></F>
+        <F label={`Roof SDL (${A})`}>{num("sdl", "areaLoad")}</F>
+        <F label={`Roof live (${A})`}>{num("live_load", "areaLoad")}</F>
+      </div>
+      <GenNote>Square-on-square double-layer grid of pin-jointed tubes. Roof load lumped at the top nodes by tributary plan area (assumed). Steel: {STEEL_FOR[p.standard]}.</GenNote>
+      <button className="btn-primary w-full" disabled={busy} onClick={() => generate({ type: "space_truss", ...p, nx: Math.round(p.nx), ny: Math.round(p.ny) })}>Generate space truss</button>
+    </div>
+  );
+}
+
+function BuildingGen() {
   const { generate, busy } = useStore();
   const u = useU();
   // state is kept in SI (m, kN/m², kN/m³...) and shown in the selected unit system
   const [p, setP] = useState({
     x: [6, 6, 6], y: [5, 5], h: [4, 3.5, 3.5, 3.5], colB: 0.4, colH: 0.4, mbB: 0.3, mbH: 0.6, sbB: 0.25, sbH: 0.45,
     sec: "y", slab: 0.18, sdl: 1.5, ll: 3.0, rll: 1.0, support: "fixed", fB: 2.0, fT: 0.6, wind: 1.0, cs: 0.08, mat: "C30/37", standard: "EN1990", qa: 250,
-    slabModel: "shell", mesh: 1.0, walls: "none", wallT: 0.2,
+    slabModel: "shell", mesh: 1.0, walls: "none", wallT: 0.2, bracing: "none",
   });
   const [lists, setLists] = useState<Record<string, string>>({});
   const listText = (k: "x" | "y" | "h") => lists[k + u.sys] ?? p[k].map((v) => +u.c("length", v).toFixed(3)).join(", ");
@@ -74,7 +209,7 @@ function Generator() {
     secondary_beam: { shape: "rect", b: p.sbB, h: p.sbH, material: p.mat },
     secondary_beams: p.sec, slab_thickness: p.slab, sdl: p.sdl, live_load: p.ll, roof_live_load: p.rll,
     support: p.support, footing: { B: p.fB, L: p.fB, t: p.fT }, wind_pressure: p.wind, seismic_cs: p.cs, standard: p.standard, allowable_bearing: p.qa,
-    slab_model: p.slabModel, mesh_size: p.mesh, walls: p.walls, wall_thickness: p.wallT,
+    slab_model: p.slabModel, mesh_size: p.mesh, walls: p.walls, wall_thickness: p.wallT, bracing: p.bracing,
   });
   const listInput = (k: "x" | "y" | "h") => (
     <input className="input" value={listText(k)} onChange={(e) => {
@@ -124,6 +259,11 @@ function Generator() {
         </select>
       </F>
       {p.walls !== "none" && <F label={`Wall thickness (${D})`}>{num("wallT", "dim")}</F>}
+      <F label="Steel bracing (end bays of outer frames)">
+        <select className="input" value={p.bracing} onChange={(e) => setP({ ...p, bracing: e.target.value })}>
+          <option value="none">none</option><option value="x">X-bracing</option><option value="diagonal">single diagonal</option>
+        </select>
+      </F>
       {(p.slabModel === "shell" || p.walls !== "none") && <F label={`Shell mesh size (${L})`} hint="smaller = more accurate, slower">{num("mesh", "length")}</F>}
       <div className="panel-title mt-3 mb-2">Foundations</div>
       <div className="grid grid-cols-2 gap-x-2">
@@ -159,9 +299,12 @@ function ModelTree() {
   const { model, hiddenTypes, set, maxLevel, exploded, isolated } = useStore();
   if (!model) return null;
   const levels = Math.max(0, ...model.elements.map((e) => e.level ?? 0));
-  const count = (k: string) => k === "slab" ? model.slabs.length : k === "wall" ? (model.walls?.length ?? 0) : k === "footing" ? model.supports.length :
-    model.elements.filter((e) => (k === "column" ? e.type === "column" : k === "brace" ? e.type === "brace" : e.type === "beam" && (e.role === "secondary") === (k === "secondary"))).length;
-  const types: [string, string, string][] = [["column", "Columns", TYPE_COLORS.column], ["main", "Main beams", TYPE_COLORS.main], ["secondary", "Secondary beams", TYPE_COLORS.secondary], ["slab", "Slabs", "#8fa3b8"], ["wall", "Walls", "#a7b4c2"], ["footing", "Footings", "#6b7a8c"]];
+  const count = (k: string) => k === "slab" ? model.slabs.length : k === "wall" ? (model.walls?.length ?? 0) : k === "footing" ? model.supports.filter((s) => !s.lateral).length :
+    model.elements.filter((e) => elementColorKey(e) === k).length;
+  const all: [string, string, string][] = [
+    ...Object.keys(TYPE_COLORS).map((k) => [k, TYPE_LABELS[k], TYPE_COLORS[k]] as [string, string, string]),
+    ["slab", "Slabs", "#8fa3b8"], ["wall", "Walls", "#a7b4c2"], ["footing", "Supports & footings", "#6b7a8c"]];
+  const types = all.filter(([k]) => count(k) > 0);
   return (
     <div>
       <div className="panel-title mb-2">Structural components</div>
@@ -188,14 +331,47 @@ function ModelTree() {
         <div>Supports: <span className="num">{model.supports.length}</span></div>
         <div>Load cases: <span className="num">{model.load_cases.length}</span>, combinations: <span className="num">{model.combinations.length}</span></div>
       </div>
-      <div className="mt-4 text-[10px] text-ink-400 leading-snug">Phase 1 editing: assign sections, delete members, add members between two nodes (shift-click two nodes in Model mode), supports and loads via the inspector. Slabs and shear walls are analysed with shell elements (Phase 2). Copy/move/rotate and bracing/trusses come in later phases.</div>
+      {model.notes?.length ? (<>
+        <div className="panel-title mt-4 mb-1">Model assumptions</div>
+        <ul className="text-[10px] text-amber-200/80 leading-snug list-disc pl-4 space-y-0.5">{model.notes.map((n) => <li key={n}>{n}</li>)}</ul>
+      </>) : null}
+      <AddNode />
+      <div className="mt-4 text-[10px] text-ink-400 leading-snug">Editing: add nodes here; add a member by shift-clicking two nodes in Model mode; set end releases (pin / truss), sections, supports and loads in the right panel. Slabs and shear walls are analysed with shell elements.</div>
+    </div>
+  );
+}
+
+function AddNode() {
+  const { model, editModel, set } = useStore();
+  const u = useU();
+  const [c, setC] = useState({ x: 0, y: 0, z: 0 });
+  if (!model) return null;
+  const add = () => {
+    let k = model.nodes.length + 1;
+    while (model.nodes.some((n) => n.id === `N${k}`)) k++;
+    const id = `N${k}`;
+    const lv = model.grid?.levels ?? [];
+    const level = lv.reduce((best, l, i) => (Math.abs(l.z - c.z) < Math.abs(lv[best].z - c.z) ? i : best), 0);
+    editModel((m) => { m.nodes.push({ id, x: c.x, y: c.y, z: c.z, level }); });
+    set({ selection: { kind: "node", id }, mode: "model" });
+  };
+  return (
+    <div>
+      <div className="panel-title mt-4 mb-1">Add node ({u.u("length")})</div>
+      <div className="grid grid-cols-3 gap-1">
+        {(["x", "y", "z"] as const).map((k) => (
+          <input key={k} className="input" type="number" step="any" title={k} placeholder={k} value={+u.c("length", c[k]).toFixed(4)}
+            onChange={(e) => setC({ ...c, [k]: u.si("length", +e.target.value) })} />
+        ))}
+      </div>
+      <button className="btn mt-1 w-full" onClick={add}>Add node</button>
     </div>
   );
 }
 
 function Sections() {
   const { model, editModel } = useStore();
-  const [n, setN] = useState({ id: "", shape: "rect", b: 300, h: 500, bf: 200, tf: 15, tw: 9, material: "C30/37" });
+  const [n, setN] = useState({ id: "", shape: "rect", b: 300, h: 500, bf: 200, tf: 15, tw: 9, d: 114.3, t: 6, material: "C30/37" });
   if (!model) return null;
   return (
     <div>
@@ -213,8 +389,15 @@ function Sections() {
       <div className="panel-title mt-4 mb-2">New section</div>
       <div className="grid grid-cols-2 gap-1">
         <input className="input" placeholder="id e.g. B2" value={n.id} onChange={(e) => setN({ ...n, id: e.target.value })} />
-        <select className="input" value={n.shape} onChange={(e) => setN({ ...n, shape: e.target.value, material: e.target.value === "I" ? "S355" : "C30/37" })}><option value="rect">Rectangle</option><option value="I">I-section</option></select>
-        {n.shape === "rect" ? (<>
+        <select className="input" value={n.shape} onChange={(e) => setN({ ...n, shape: e.target.value, material: e.target.value === "rect" ? "C30/37" : "S355" })}><option value="rect">Rectangle</option><option value="I">I-section</option><option value="pipe">Tube (CHS)</option><option value="box">Box (RHS/SHS)</option></select>
+        {n.shape === "pipe" ? (<>
+          <input className="input" type="number" title="d (mm)" value={n.d} onChange={(e) => setN({ ...n, d: +e.target.value })} />
+          <input className="input" type="number" title="t (mm)" value={n.t} onChange={(e) => setN({ ...n, t: +e.target.value })} />
+        </>) : n.shape === "box" ? (<>
+          <input className="input" type="number" title="b (mm)" value={n.b} onChange={(e) => setN({ ...n, b: +e.target.value })} />
+          <input className="input" type="number" title="h (mm)" value={n.h} onChange={(e) => setN({ ...n, h: +e.target.value })} />
+          <input className="input col-span-2" type="number" title="t (mm)" value={n.t} onChange={(e) => setN({ ...n, t: +e.target.value })} />
+        </>) : n.shape === "rect" ? (<>
           <input className="input" type="number" title="b (mm)" value={n.b} onChange={(e) => setN({ ...n, b: +e.target.value })} />
           <input className="input" type="number" title="h (mm)" value={n.h} onChange={(e) => setN({ ...n, h: +e.target.value })} />
         </>) : (<>
@@ -227,6 +410,8 @@ function Sections() {
       </div>
       <button className="btn mt-2 w-full" disabled={!n.id || !!model.sections[n.id]} onClick={() => editModel((m) => {
         const s: Section = n.shape === "rect" ? { shape: "rect", b: n.b / 1000, h: n.h / 1000, material: n.material, name: `${n.b}x${n.h} ${n.material}` }
+          : n.shape === "pipe" ? { shape: "pipe", d: n.d / 1000, t: n.t / 1000, material: n.material, name: `CHS ${n.d}x${n.t} ${n.material}` }
+          : n.shape === "box" ? { shape: "box", b: n.b / 1000, h: n.h / 1000, t: n.t / 1000, material: n.material, name: `RHS ${n.h}x${n.b}x${n.t} ${n.material}` }
           : { shape: "I", h: n.h / 1000, bf: n.bf / 1000, tf: n.tf / 1000, tw: n.tw / 1000, material: n.material, name: `I ${n.h}x${n.bf} ${n.material}` };
         m.sections[n.id] = s;
       })}>Add section</button>

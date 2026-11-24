@@ -107,9 +107,33 @@ Run the solver tests: `cd backend && python -m pytest -q`
   test, a rotated plate, a shell cantilever, node balance with shells, shell vs tributary column loads, and walls
   attracting lateral load.
 
+## Phase 3: trusses and more complex structures
+
+- **Member end releases** (`backend/structural/solver.py`): any rotational DOF at either end can be released
+  (pinned ends, truss members). Implemented by static condensation of the element stiffness and fixed-end forces,
+  with recovery of the released rotations so that the deflected shape between nodes stays exact.
+- **Truss members** (`truss: true` or type `truss`): moments released at both ends, axial force only under nodal
+  loads. Rotations at joints where every member is pinned are fixed automatically and reported as INFO; real
+  mechanisms (a truss panel without a diagonal, a roof without bracing) are still reported as errors.
+- **Hollow sections**: circular tubes (CHS: d, t) and rectangular/square boxes (RHS/SHS: b, h, t; Bredt torsion).
+- **New generators** (left panel, *Structure type*):
+  - Planar truss: Pratt, Howe, Warren or pitched (gable, Pratt-pattern web), any span, depth and panel count.
+  - Steel warehouse: pitched Pratt roof trusses on steel columns, simply supported purlins, eave struts,
+    bottom-chord ties, roof and wall X-bracing in the end bays (switch the bracing off to see the stability check
+    report the mechanism).
+  - Space truss roof: square-on-square double-layer grid on tube columns (or pinned supports).
+  - Buildings: steel X or single-diagonal bracing in the end bays of the outer frames.
+- **Modelling tools**: end-release editor in the inspector (Rigid / Pin i / Pin j / Pin both / Truss, also for a
+  multi-selection), *Add node* by coordinates in the Model tab, tube and box sections in the Sections tab, hinge
+  symbols at released ends, truss chord/web/purlin colours, and the model's assumptions listed in the Model tab.
+- Verification: 17 more tests (57 in total): a Pratt truss against the method of joints and virtual-work deflection,
+  pinned-pinned and fixed-pinned beams (qL²/8, 5qL⁴/384EI, reactions 5qL/8 and 3qL/8), a truss mechanism, hollow
+  section properties, the top chord force wL²/(8h) of the generated truss, equilibrium of every generator, and
+  bracing reducing drift.
+
 ## Not yet included (planned)
 
-- Bracing, trusses, purlins, member end releases, rigid diaphragms, spring supports, openings in walls and slabs.
+- Tension-only bracing, member buckling, rigid diaphragms, spring supports, openings in walls and slabs.
 - Copy/move/rotate tools, snapping, DXF/IFC import, OBJ/GLTF export, PDF reports.
 - Buckling, design code checks (no utilisation ratios or compliance claims are made), database storage.
 

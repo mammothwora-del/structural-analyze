@@ -54,6 +54,18 @@ The integrated values at end j are checked against the FE nodal solution (`end_c
 * Slabs are modelled in the plane of the beam centrelines (no offset, no T-beam action). Wall base nodes get the
   wall's base support.
 
+## End releases and trusses (Phase 3)
+* `element.releases = {"i": [ux,uy,uz,rx,ry,rz], "j": [...]}` in **local** element axes, 1 = released. Only
+  rotations can be released (translations raise a model error). Torsion released at both ends is kept at end i.
+* `truss: true` (or `type: "truss"`) = releases i `[0,0,0,0,1,1]`, j `[0,0,0,1,1,1]`.
+* Element stiffness and fixed-end forces are condensed: K* = Kcc − Krcᵀ Krr⁻¹ Krc, P* = Pc − Krcᵀ Krr⁻¹ Pr; the
+  released end rotations are recovered after the solve for the deflected shape.
+* A load on a truss member (e.g. self-weight) still bends it between its ends as a simply supported beam; the
+  member stays pin-ended. Joint rotations with zero stiffness (all connected members pinned) are fixed and reported.
+* Generated roof loads: planar and space trusses lump q × tributary length/area at the top nodes; the warehouse
+  spreads q × purlin spacing as line loads on the purlins (sheeting spanning one way). All three are **assumed**.
+* Bracing is linear elastic in tension and compression. No tension-only behaviour, no buckling.
+
 ## What is calculated vs. assumed
 | Item | Status |
 |---|---|
@@ -61,6 +73,10 @@ The integrated values at end j are checked against the FE nodal solution (`end_c
 | Elastic extreme-fibre stress N/A ± My/Sy ± Mz/Sz | Calculated |
 | Slab bending, membrane forces, deflection; shear walls | Calculated (shell FEM, verified by plate benchmarks) |
 | Slab → beam load distribution | Slab analysis = Shell FEM: **calculated**. Slab analysis = Tributary: **assumed** 45° tributary areas |
+| Truss member forces, pinned-end members | Calculated (FEM with condensed end releases, verified against method of joints) |
+| Roof load to truss nodes / purlins | **Assumed** tributary lumping (trusses) or one-way sheeting (warehouse) |
+| Out-of-plane restraint of planar trusses | **Assumed** lateral restraint at every node (purlins/bracing not modelled) |
+| Bracing behaviour | Linear, tension and compression; **no** tension-only or buckling |
 | Footing soil pressure | **Assumed** rigid footing, linear full-contact pressure |
 | Wind / seismic loads | **Simplified** generators (net pressure / ELF with user Cs), not code calculations |
 | Load combinations (Thai, EN 1990, ASCE 7) | Presets of the factors only; editable; verify against the edition in force |
