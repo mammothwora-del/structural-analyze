@@ -49,8 +49,8 @@ STEEL_BY_STD = {"TH": "SS400", "EN1990": "S355", "ASCE7": "A992"}
 
 
 def generate(params: dict | None = None) -> dict:
-    """Dispatch to the generator for params['type'] (building | truss2d | warehouse | space_truss)."""
-    from .structures import generate_space_truss, generate_truss2d, generate_warehouse
+    """Dispatch to the generator for params['type'] (building | truss2d | warehouse | space_truss | lattice_roof)."""
+    from .structures import generate_lattice_roof, generate_space_truss, generate_truss2d, generate_warehouse
     t = (params or {}).get("type", "building")
     if t == "building":
         return generate_building(params)
@@ -60,6 +60,8 @@ def generate(params: dict | None = None) -> dict:
         return generate_warehouse(params)
     if t == "space_truss":
         return generate_space_truss(params)
+    if t == "lattice_roof":
+        return generate_lattice_roof(params)
     raise ValueError(f"Unknown structure type '{t}'")
 
 COMBOS = {

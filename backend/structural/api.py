@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .analysis import analyze
 from .generator import DEFAULTS, generate as generate_structure
-from .structures import SPACE_DEFAULTS, TRUSS_DEFAULTS, WAREHOUSE_DEFAULTS
+from .structures import LATTICE_DEFAULTS, SPACE_DEFAULTS, TRUSS_DEFAULTS, WAREHOUSE_DEFAULTS
 from .sections import MATERIALS, section_properties
 from .solver import ModelError
 
@@ -26,7 +26,7 @@ def health():
 @app.get("/api/defaults")
 def defaults():
     return {"generator": DEFAULTS, "truss2d": TRUSS_DEFAULTS, "warehouse": WAREHOUSE_DEFAULTS,
-            "space_truss": SPACE_DEFAULTS, "materials": MATERIALS}
+            "space_truss": SPACE_DEFAULTS, "lattice_roof": LATTICE_DEFAULTS, "materials": MATERIALS}
 
 
 @app.post("/api/generate")

@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { Section } from "../lib/types";
 import { useStore, useU } from "../store";
 import { elementColorKey, TYPE_COLORS, TYPE_LABELS } from "../three/Members";
-import { GenPreview, TrussTypePicker } from "./GenPreview";
+import { GenPreview, isRoofTruss, PicturePicker, TRUSS_TYPES, TrussTypePicker } from "./GenPreview";
 
 const list = (s: string) => s.split(/[,\s]+/).filter(Boolean).map(Number).filter((x) => x > 0);
 
@@ -52,12 +52,13 @@ const OCCUPANCY: Record<string, { label: string; q: number }[]> = {
 const MATS: Record<string, string[]> = { TH: ["TH-fc240", "TH-fc280", "TH-fc320", "TH-fc210", "TH-fc180"], EN1990: ["C30/37", "C25/30", "C40/50"], ASCE7: ["C30/37", "C25/30", "C40/50"] };
 const KGM2 = 0.00980665; // kN/m² per kg/m²
 
-type StructType = "building" | "truss2d" | "warehouse" | "space_truss";
+type StructType = "building" | "truss2d" | "warehouse" | "space_truss" | "lattice_roof";
 const STRUCT_LABEL: Record<StructType, string> = {
   building: "Multi-storey building (frame, slabs, walls, bracing)",
-  truss2d: "Planar truss (Pratt, Howe, Warren, pitched)",
-  warehouse: "Steel warehouse with roof trusses",
+  truss2d: "Planar truss (12 types)",
+  warehouse: "Steel warehouse (roof trusses or portal frame)",
   space_truss: "Space truss roof (double-layer grid)",
+  lattice_roof: "Lattice roof (barrel vault, dome)",
 };
 
 function Generator() {
@@ -72,6 +73,7 @@ function Generator() {
       {type === "truss2d" && <TrussGen />}
       {type === "warehouse" && <WarehouseGen />}
       {type === "space_truss" && <SpaceGen />}
+      {type === "lattice_roof" && <LatticeGen />}
     </div>
   );
 }
@@ -102,23 +104,25 @@ function GenNote({ children }: { children: React.ReactNode }) {
 
 function TrussGen() {
   const { generate, busy } = useStore();
-  const { p, setP, num, u } = useSI({ truss_type: "pratt", span: 18, height: 2, panels: 6, eave_depth: 0, spacing: 6, sdl: 0.5, live_load: 0.5, standard: "EN1990",
+  const { p, setP, num, u } = useSI({ truss_type: "pratt", span: 18, height: 2, panels: 6, eave_depth: 0, bottom_rise: 0, spacing: 6, sdl: 0.5, live_load: 0.5, standard: "EN1990",
     chB: 0.15, chT: 0.008, wD: 0.0889, wT: 0.005 });
   const L = u.u("length"), D = u.u("dim");
   const params = { type: "truss2d", truss_type: p.truss_type, span: p.span, height: p.height, panels: Math.round(p.panels),
-    eave_depth: p.eave_depth, spacing: p.spacing, sdl: p.sdl, live_load: p.live_load, standard: p.standard,
+    eave_depth: isRoofTruss(p.truss_type) ? p.eave_depth : 0, bottom_rise: p.bottom_rise, spacing: p.spacing, sdl: p.sdl, live_load: p.live_load, standard: p.standard,
     chord: { shape: "box", b: p.chB, h: p.chB, t: p.chT }, web: { shape: "pipe", d: p.wD, t: p.wT } };
   return (
     <div>
       <div className="text-[11px] text-ink-400 mb-1">Truss type</div>
-      <TrussTypePicker value={p.truss_type} onChange={(v) => setP({ ...p, truss_type: v })} />
+      <TrussTypePicker value={p.truss_type} onChange={(v) => setP({ ...p, truss_type: v, height: isRoofTruss(v) && !isRoofTruss(p.truss_type) ? 3 : !isRoofTruss(v) && isRoofTruss(p.truss_type) ? 2 : p.height })} />
+      <div className="text-[10px] text-ink-400 -mt-1 mb-2">{TRUSS_TYPES.find((t) => t.key === p.truss_type)?.hint}</div>
       <GenPreview params={params} view="front" height={110} />
       <F label="Standard (combinations, steel)"><select className="input" value={p.standard} onChange={(e) => setP({ ...p, standard: e.target.value })}>{STD_OPTIONS}</select></F>
       <div className="grid grid-cols-2 gap-x-2">
         <F label={`Span (${L})`}>{num("span", "length")}</F>
-        <F label={p.truss_type === "pitched" ? `Rise (${L})` : `Depth (${L})`}>{num("height", "length")}</F>
-        <F label="Panels">{num("panels", null, 1)}</F>
-        {p.truss_type === "pitched" && <F label={`Depth at supports (${L})`}>{num("eave_depth", "length")}</F>}
+        <F label={isRoofTruss(p.truss_type) ? `Rise (${L})` : `Depth (${L})`}>{num("height", "length")}</F>
+        {p.truss_type !== "fink" && p.truss_type !== "fan" && <F label="Panels">{num("panels", null, 1)}</F>}
+        {isRoofTruss(p.truss_type) && <F label={`Depth at supports (${L})`}>{num("eave_depth", "length")}</F>}
+        {p.truss_type === "scissors" && <F label={`Bottom chord rise (${L})`} hint="0 = rise/2">{num("bottom_rise", "length")}</F>}
         <F label={`Truss spacing (${L})`}>{num("spacing", "length")}</F>
         <F label={`Roof SDL (${u.u("areaLoad")})`}>{num("sdl", "areaLoad")}</F>
         <F label={`Roof live (${u.u("areaLoad")})`}>{num("live_load", "areaLoad")}</F>
@@ -135,22 +139,28 @@ function TrussGen() {
 
 function WarehouseGen() {
   const { generate, busy } = useStore();
-  const { p, setP, num, u } = useSI({ span: 20, bay: 6, n_bays: 5, eave_height: 6, rise: 2, eave_depth: 1, panels: 8, support: "fixed", sdl: 0.3, live_load: 0.5,
+  const { p, setP, num, u } = useSI({ roof: "pitched", span: 20, n_spans: 1, bay: 6, n_bays: 5, eave_height: 6, rise: 2, eave_depth: 1, panels: 8, support: "fixed", sdl: 0.3, live_load: 0.5,
     wind_pressure: 0.8, standard: "EN1990", roof_bracing: true, wall_bracing: true });
   const L = u.u("length"), A = u.u("areaLoad");
-  const params = { type: "warehouse", ...p, n_bays: Math.round(p.n_bays), panels: Math.round(p.panels) };
+  const portal = p.roof === "portal";
+  const params = { type: "warehouse", ...p, n_bays: Math.round(p.n_bays), n_spans: Math.max(1, Math.round(p.n_spans)), panels: Math.round(p.panels), eave_depth: portal ? 0 : p.eave_depth };
+  const roofs = [...WAREHOUSE_ROOFS.map(([key, label, hint]) => ({ key, label, hint,
+    params: { type: "warehouse", roof: key, span: 16, n_bays: 1, eave_height: 5, rise: 2.5, eave_depth: key === "portal" ? 0 : 0.8, panels: 6, roof_bracing: false, wall_bracing: false, wind_pressure: 0 } }))];
   return (
     <div>
+      <div className="text-[11px] text-ink-400 mb-1">Roof structure</div>
+      <PicturePicker options={roofs} value={p.roof} onChange={(v) => setP({ ...p, roof: v })} cols={4} height={30} />
       <GenPreview params={params} />
       <F label="Standard (combinations, steel)"><select className="input" value={p.standard} onChange={(e) => setP({ ...p, standard: e.target.value })}>{STD_OPTIONS}</select></F>
       <div className="grid grid-cols-2 gap-x-2">
         <F label={`Span (${L})`}>{num("span", "length")}</F>
+        <F label="Number of spans">{num("n_spans", null, 1)}</F>
         <F label={`Bay spacing (${L})`}>{num("bay", "length")}</F>
         <F label="Number of bays">{num("n_bays", null, 1)}</F>
         <F label={`Eave height (${L})`}>{num("eave_height", "length")}</F>
         <F label={`Roof rise (${L})`}>{num("rise", "length")}</F>
-        <F label={`Truss depth at eave (${L})`}>{num("eave_depth", "length")}</F>
-        <F label="Truss panels">{num("panels", null, 1)}</F>
+        {!portal && <F label={`Truss depth at eave (${L})`}>{num("eave_depth", "length")}</F>}
+        {p.roof !== "fink" && p.roof !== "fan" && <F label={portal ? "Purlin spaces per span" : "Truss panels"}>{num("panels", null, 1)}</F>}
         <F label="Column bases"><select className="input" value={p.support} onChange={(e) => setP({ ...p, support: e.target.value })}><option value="fixed">fixed</option><option value="pinned">pinned</option></select></F>
         <F label={`Roof SDL (${A})`}>{num("sdl", "areaLoad")}</F>
         <F label={`Roof live (${A})`}>{num("live_load", "areaLoad")}</F>
@@ -158,8 +168,67 @@ function WarehouseGen() {
       </div>
       <label className="flex items-center gap-2 text-[11px] mb-1"><input type="checkbox" className="accent-sky-400" checked={p.roof_bracing} onChange={(e) => setP({ ...p, roof_bracing: e.target.checked })} />Roof bracing in end bays</label>
       <label className="flex items-center gap-2 text-[11px] mb-2"><input type="checkbox" className="accent-sky-400" checked={p.wall_bracing} onChange={(e) => setP({ ...p, wall_bracing: e.target.checked })} />Wall bracing in end bays</label>
-      <GenNote>Pitched Pratt trusses on steel columns, simply supported purlins, eave struts, bottom-chord ties with vertical bracing in the end bays. Roof sheeting spans one way to the purlins (assumed). Untick a bracing option to see the stability check report the mechanism. Steel: {STEEL_FOR[p.standard]}.</GenNote>
+      <GenNote>{portal ? "Portal frames: I-section rafters rigidly connected to the columns (no haunches modelled)" : "Roof trusses on steel columns, bottom-chord ties with vertical bracing in the end bays"}, simply supported purlins and eave struts. Roof sheeting spans one way to the purlins (assumed). Several spans share the internal columns. Untick a bracing option to see the stability check report the mechanism. Steel: {STEEL_FOR[p.standard]}.</GenNote>
       <button className="btn-primary w-full" disabled={busy} onClick={() => generate(params)}>Generate warehouse</button>
+    </div>
+  );
+}
+
+const WAREHOUSE_ROOFS: [string, string, string][] = [
+  ["pitched", "Pratt", "pitched Pratt roof truss"], ["howe_roof", "Howe", "pitched Howe roof truss"], ["fink", "Fink", "Fink (W) roof truss"],
+  ["fan", "Fan", "fan roof truss"], ["scissors", "Scissors", "scissors truss (raised bottom chord)"], ["bowstring", "Bowstring", "curved top chord"],
+  ["mono", "Mono", "mono-pitch truss (lean-to / saw-tooth when multi-span)"], ["portal", "Portal", "portal frame with I-section rafters, no truss"],
+];
+
+const LATTICE_SHAPES = [
+  { key: "barrel", label: "Barrel vault", hint: "cylindrical lattice shell", params: { type: "lattice_roof", shape: "barrel", span: 24, rise: 6, length: 30, n_arc: 8, n_long: 6 }, view: "iso" as const },
+  { key: "dome", label: "Dome", hint: "spherical lattice dome", params: { type: "lattice_roof", shape: "dome", diameter: 24, dome_rise: 7, n_rings: 4, n_sectors: 12 }, view: "iso" as const },
+];
+const LATTICE_PATTERNS: Record<string, [string, string, string][]> = {
+  barrel: [["braced", "Braced", "quads with one diagonal (herringbone)"], ["cross", "Cross-braced", "quads with X diagonals"], ["ribbed", "Ribbed", "arches and longitudinals only (frame action)"]],
+  dome: [["schwedler", "Schwedler", "ribs, rings and one diagonal per panel"], ["lamella", "Lamella", "rotated rings, fully triangulated"], ["ribbed", "Ribbed", "ribs and rings only (frame action)"]],
+};
+
+function LatticeGen() {
+  const { generate, busy } = useStore();
+  const { p, setP, num, u } = useSI({ shape: "barrel", pattern: "braced", span: 24, rise: 6, length: 36, n_arc: 12, n_long: 12, diameter: 30, dome_rise: 7.5, n_rings: 6, n_sectors: 16,
+    support_height: 0, sdl: 0.3, live_load: 0.5, standard: "EN1990", d: 0.1397, t: 0.0063 });
+  const L = u.u("length"), A = u.u("areaLoad"), D = u.u("dim");
+  const barrel = p.shape === "barrel";
+  const { d, t, ...rest } = p;
+  const params = { type: "lattice_roof", ...rest, n_arc: Math.round(p.n_arc), n_long: Math.round(p.n_long), n_rings: Math.round(p.n_rings), n_sectors: Math.round(p.n_sectors),
+    member: { shape: "pipe", d, t } };
+  const patterns = LATTICE_PATTERNS[p.shape].map(([key, label, hint]) => ({ key, label, hint, view: "iso" as const,
+    params: barrel ? { type: "lattice_roof", shape: "barrel", pattern: key, span: 24, rise: 6, length: 24, n_arc: 6, n_long: 4 }
+      : { type: "lattice_roof", shape: "dome", pattern: key, diameter: 24, dome_rise: 7, n_rings: 3, n_sectors: 10 } }));
+  return (
+    <div>
+      <PicturePicker options={LATTICE_SHAPES} value={p.shape} onChange={(v) => setP({ ...p, shape: v, pattern: LATTICE_PATTERNS[v][0][0] })} cols={2} height={44} />
+      <div className="text-[11px] text-ink-400 mb-1">Pattern</div>
+      <PicturePicker options={patterns} value={p.pattern} onChange={(v) => setP({ ...p, pattern: v })} cols={3} height={34} />
+      <GenPreview params={params} />
+      <F label="Standard (combinations, steel)"><select className="input" value={p.standard} onChange={(e) => setP({ ...p, standard: e.target.value })}>{STD_OPTIONS}</select></F>
+      <div className="grid grid-cols-2 gap-x-2">
+        {barrel ? <>
+          <F label={`Span (${L})`}>{num("span", "length")}</F>
+          <F label={`Rise (${L})`}>{num("rise", "length")}</F>
+          <F label={`Length (${L})`}>{num("length", "length")}</F>
+          <F label="Segments across">{num("n_arc", null, 1)}</F>
+          <F label="Bays along">{num("n_long", null, 1)}</F>
+        </> : <>
+          <F label={`Diameter (${L})`}>{num("diameter", "length")}</F>
+          <F label={`Rise (${L})`}>{num("dome_rise", "length")}</F>
+          <F label="Rings">{num("n_rings", null, 1)}</F>
+          <F label="Sectors">{num("n_sectors", null, 1)}</F>
+        </>}
+        <F label={`Support level (${L})`}>{num("support_height", "length")}</F>
+        <F label={`Roof SDL (${A})`}>{num("sdl", "areaLoad")}</F>
+        <F label={`Roof live (${A})`}>{num("live_load", "areaLoad")}</F>
+        <F label={`Tube d (${D})`}>{num("d", "dim")}</F>
+        <F label={`Tube wall t (${D})`}>{num("t", "dim")}</F>
+      </div>
+      <GenNote>Single-layer steel tube lattice with rigid joints, pinned along the springing line (ring beam or walls assumed rigid). Roof load lumped at the nodes by tributary plan area (assumed). Linear analysis only: buckling and snap-through, which usually govern lattice shells, are NOT checked. Steel: {STEEL_FOR[p.standard]}.</GenNote>
+      <button className="btn-primary w-full" disabled={busy} onClick={() => generate(params)}>Generate {barrel ? "barrel vault" : "dome"}</button>
     </div>
   );
 }

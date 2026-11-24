@@ -16,11 +16,16 @@ export const TYPE_COLORS: Record<string, string> = {
   chord: "#e0b25a",
   web: "#e58f6f",
   purlin: "#9fb7c9",
+  rafter: "#d98b4a",
+  rib: "#e6c06a",
+  ring: "#8fc3e6",
+  lattice: "#c792ea",
 };
 
 export const TYPE_LABELS: Record<string, string> = {
   column: "Columns", main: "Main beams", secondary: "Secondary beams", brace: "Bracing & ties",
-  chord: "Truss chords", web: "Truss webs", purlin: "Purlins & eave struts",
+  chord: "Truss chords", web: "Truss webs", purlin: "Purlins & eave struts", rafter: "Rafters",
+  rib: "Ribs & arches", ring: "Rings & longitudinals", lattice: "Lattice diagonals",
 };
 
 export function elementColorKey(e: Element) {
@@ -28,6 +33,10 @@ export function elementColorKey(e: Element) {
   if (e.type === "brace") return "brace";
   if (e.type === "truss") return e.role === "chord" ? "chord" : "web";
   if (e.role === "purlin" || e.role === "eave") return "purlin";
+  if (e.role === "rafter") return "rafter";
+  if (e.role === "rib" || e.role === "arch") return "rib";
+  if (e.role === "ring" || e.role === "longitudinal") return "ring";
+  if (e.role === "diagonal") return "lattice";
   return e.role === "secondary" ? "secondary" : "main";
 }
 

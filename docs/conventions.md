@@ -76,6 +76,9 @@ The integrated values at end j are checked against the FE nodal solution (`end_c
 | Truss member forces, pinned-end members | Calculated (FEM with condensed end releases, verified against method of joints) |
 | Roof load to truss nodes / purlins | **Assumed** tributary lumping (trusses) or one-way sheeting (warehouse) |
 | Out-of-plane restraint of planar trusses | **Assumed** lateral restraint at every node (purlins/bracing not modelled) |
+| Portal frame knees and ridge | **Assumed** rigid, no haunches modelled |
+| Lattice roofs (vault, dome) | Linear FEM with rigid joints; **buckling / snap-through NOT checked** (usually governs) |
+| Lattice roof supports | **Assumed** pinned along the springing line (rigid ring beam / walls) |
 | Bracing behaviour | Linear, tension and compression; **no** tension-only or buckling |
 | Footing soil pressure | **Assumed** rigid footing, linear full-contact pressure |
 | Wind / seismic loads | **Simplified** generators (net pressure / ELF with user Cs), not code calculations |
