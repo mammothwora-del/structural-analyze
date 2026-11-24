@@ -185,6 +185,7 @@ function ElementPanel({ model, results, id }: { model: Model; results: Results |
       </Section>
       <EndReleases ids={[id]} />
       <SteelDesignSection model={model} id={id} />
+      <RcDesignSection model={model} id={id} />
 
       {!results && <div className="mt-4 text-xs text-ink-400">Run ANALYZE to see internal forces, stresses, displacements and load transfer.</div>}
 
@@ -547,5 +548,68 @@ function SteelDesignSection({ model, id }: { model: Model; id: string }) {
         </>
       )}
     </Section>
+  );
+}
+
+/** Reinforcement and checks of one RC beam or column (EIT 1008-38). */
+function RcDesignSection({ model, id }: { model: Model; id: string }) {
+  const u = useU();
+  const { rc, set } = useStore();
+  const el = model.elements.find((e) => e.id === id);
+  const sec = el ? model.sections[el.section] : undefined;
+  const r = rc?.members[id];
+  const isRc = (model.materials[sec?.material ?? ""]?.kind ?? (r && r.status !== "skipped" ? "concrete" : "")) === "concrete";
+  if (!el || !isRc || (el.type !== "beam" && el.type !== "column")) return null;
+  const rb = r?.rebar;
+  const rows: [string, string][] = rb ? (r!.kind === "beam"
+    ? [["Bottom bars", String(rb.bottom)], ["Top bars", String(rb.top)], ...(rb.side ? [["Side bars", String(rb.side)] as [string, string]] : []), ["Stirrups", String(rb.stirrups)], ["Effective depth d", `${u.f("dim", Number(rb.d), 0)} ${u.u("dim")}`]]
+    : [["Longitudinal bars", `${rb.bars} (${Number(rb.rho_percent).toFixed(2)} %)`], ["Layout", String(rb.layout)], ["Ties", String(rb.ties)]]) : [];
+  return (
+    <Section title="RC design (EIT 1008-38)" tag={r && r.status !== "skipped" ? statusTag(r) : undefined}>
+      {!r && <button className="btn w-full" onClick={() => { set({ mode: "design", designTab: "rc" }); useStore.getState().runRc(); }}>Design RC beams and columns</button>}
+      {r?.status === "not_covered" && <div className="text-amber-300 text-[11px]">Not covered: {r.reason}</div>}
+      {rb && sec?.b && sec?.h && (
+        <div className="flex gap-3 items-start">
+          <RcSketch b={sec.b} h={sec.h} bars={rb.sketch ?? []} cover={rc!.options.cover} />
+          <div className="flex-1 text-[11px]">{rows.map(([k, v]) => <div key={k} className="py-0.5 border-b border-ink-800/80"><div className="text-ink-500">{k}</div><div className="text-ink-100 font-mono">{v}</div></div>)}</div>
+        </div>
+      )}
+      {r?.checks && r.checks.length > 0 && (
+        <>
+          <div className="text-[11px] text-ink-400 mt-1">fc' {r.params?.fc_ksc.toFixed(0)} ksc · {rc!.options.main_grade} · utilisation <b className={r.util! > 1 ? "text-red-300" : "text-ink-100"}>{r.util!.toFixed(3)}</b></div>
+          <table className="w-full text-[11px] mt-1">
+            <thead className="text-ink-500"><tr><th className="text-left font-medium">Check</th><th className="text-right font-medium">Demand / capacity</th><th className="text-right font-medium pl-1">Ratio</th></tr></thead>
+            <tbody>
+              {r.checks.map((c) => {
+                const f = fmtCheck(c, u);
+                const tip = [`${c.clause} · ${c.combo}`, ...Object.entries(c.detail).map(([k, v]) => `${k} = ${typeof v === "number" ? (Math.abs(v) < 1e-3 && v !== 0 ? v.toExponential(3) : v.toFixed(3)) : v}`)].join("\n");
+                return (
+                  <tr key={c.id} className="border-t border-ink-800" title={tip}>
+                    <td className="py-0.5 text-ink-300">{c.name}<div className="text-[10px] text-ink-500">{c.clause}{c.combo ? ` · ${c.combo}` : ""}</div></td>
+                    <td className="num text-right text-ink-300 whitespace-nowrap align-top pt-0.5">{f.d} / {f.cap}<div className="text-[10px] text-ink-500">{f.unit}</div></td>
+                    <td className={`num text-right align-top pt-0.5 pl-1 ${c.ratio > 1 ? "text-red-300" : c.ratio > 0.9 ? "text-amber-200" : "text-ink-100"}`}>{c.ratio.toFixed(2)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {r.notes && r.notes.length > 0 && <ul className="mt-1 list-disc pl-4 space-y-0.5 text-[11px] text-ink-500">{r.notes.map((n, k) => <li key={k}>{n}</li>)}</ul>}
+          <div className="text-[10px] text-ink-600 mt-1">Hover a row for the clause and intermediate values (kgf, cm, ksc where noted).</div>
+        </>
+      )}
+    </Section>
+  );
+}
+
+/** Cross-section drawing (to scale): concrete outline, stirrup line and bars. */
+function RcSketch({ b, h, bars, cover }: { b: number; h: number; bars: number[][]; cover: number }) {
+  const W = 92, s = W / Math.max(b, h), pad = 4;
+  const w = b * s, hh = h * s;
+  return (
+    <svg width={w + 2 * pad} height={hh + 2 * pad} className="shrink-0">
+      <rect x={pad} y={pad} width={w} height={hh} fill="#8fa3b8" fillOpacity={0.15} stroke="#8fa3b8" strokeWidth={1} />
+      <rect x={pad + cover * s} y={pad + cover * s} width={w - 2 * cover * s} height={hh - 2 * cover * s} fill="none" stroke="#e0b25a" strokeWidth={1} rx={2} />
+      {bars.map(([y, z, d], k) => <circle key={k} cx={pad + w / 2 + y * s} cy={pad + hh / 2 - z * s} r={Math.max(d * s / 2, 1.6)} fill="#ff9d3b" />)}
+    </svg>
   );
 }
