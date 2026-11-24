@@ -138,6 +138,13 @@ Run the solver tests: `cd backend && python -m pytest -q`
   - Roof trusses: pitched Pratt, pitched Howe, Fink (W), fan, scissors, mono-pitch, bowstring.
 - **Steel warehouse roof options**: any of the roof trusses or a **portal frame** (I-section rafters rigid to the columns).
   - **Multi-span**: several spans share the internal column lines. Mono-pitch spans give a saw-tooth roof.
+  - **Span lengths**: type one length per span, e.g. `20, 15`. Spans can be different.
+  - **One roof over all spans**: a single truss or rafter runs over the full width and is carried by middle
+    columns on the inner grid lines. Panel points are placed on the column lines, and the rise is over the full width.
+    Not available for Fink and fan trusses, because their panel layout is fixed.
+- **Grid dimensions in the 3D view**: the distance between neighbouring grid lines, plus the overall length.
+  The **Dims** button switches them on and off. The **Text size** slider (60–300%) scales the dimension text and
+  the grid names. A dimension chain seen end-on in an elevation is hidden.
 - **Lattice roofs** (new *Lattice roof* type):
   - Single-layer tube **barrel vault**: braced, cross-braced or ribbed.
   - Spherical **dome**: Schwedler, lamella or ribbed.

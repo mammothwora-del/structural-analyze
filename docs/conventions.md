@@ -65,6 +65,12 @@ The integrated values at end j are checked against the FE nodal solution (`end_c
 * Generated roof loads: planar and space trusses lump q × tributary length/area at the top nodes; the warehouse
   spreads q × purlin spacing as line loads on the purlins (sheeting spanning one way). All three are **assumed**.
 * Bracing is linear elastic in tension and compression. No tension-only behaviour.
+* Warehouse spans: `spans` (a list, or text such as "20, 15") replaces `span` × `n_spans`. With
+  `roof_layout: "continuous"` one roof truss or rafter spans the full width. Its panel points include every inner
+  column line, and the ridge for symmetric roofs. Each stretch between them gets equal panels, close to (mean span) /
+  panels. Inner columns stop at the bottom chord, and the post above them stays a truss web. The truss is
+  continuous over those columns, so the bottom chord next to them is in compression under gravity. That force
+  comes out of the analysis and is not assumed. `roof_layout: "repeat"` (the default) keeps one roof per span.
 
 ## Buckling and P-Delta (`structural/stability.py`)
 * Geometric stiffness of a frame member with axial force N (tension positive):
