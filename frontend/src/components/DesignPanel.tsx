@@ -1,6 +1,8 @@
 import { cssColorAt } from "../lib/colormap";
 import type { Display } from "../lib/display";
-import type { Model, RcDesignResult, SteelCheck, SteelDesignResult, SteelMember } from "../lib/types";
+import { useState } from "react";
+import { api } from "../lib/api";
+import type { Model, RcDesignResult, SteelCheck, SteelDesignResult, SteelMember, SuggestResult } from "../lib/types";
 import type { UnitsApi } from "../lib/units";
 import { useStore, useU } from "../store";
 
@@ -133,7 +135,109 @@ function SteelTab({ model }: { model: Model }) {
       {steelError && <div className="mb-2 rounded border border-red-500/40 bg-red-500/10 p-1.5 text-red-200">{steelError}</div>}
       {!steel && !steelBusy && <div className="text-ink-400">Checks every steel member for all ultimate (ULS) combinations of the model, from a fresh linear analysis. Concrete members are left for RC design.</div>}
 
+      <SuggestSizes model={model} />
       {steel && <Summary r={steel} />}
     </>
+  );
+}
+
+const FAMILY_OPTIONS: [string, string][] = [["keep", "Same shape"], ["H", "H section"], ["SHS", "SHS"], ["RHS", "RHS"], ["CHS", "CHS"], ["lock", "Keep this size"]];
+
+/** Lightest standard size per section group that passes, worked out on the server with fresh analyses. */
+function SuggestSizes({ model }: { model: Model }) {
+  const s = useStore();
+  const [open, setOpen] = useState(false);
+  const [target, setTarget] = useState(1.0);
+  const [slender, setSlender] = useState(true);
+  const [groups, setGroups] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [res, setRes] = useState<SuggestResult | null>(null);
+  const steelSecs = Object.entries(model.sections).filter(([k, sec]) => model.materials[sec.material]?.kind === "steel" && model.elements.some((e) => e.section === k));
+  if (!steelSecs.length) return null;
+  const run = async () => {
+    setBusy(true); setErr(null); setRes(null);
+    try {
+      setRes(await api.suggestSteel(model, s.steelCode || undefined, target, groups, slender));
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const apply = async () => {
+    if (!res) return;
+    const r = res;
+    s.editModel((m) => { Object.assign(m.sections, r.sections); });
+    s.set({ steel: r.design, log: [...useStore.getState().log, `— Suggested sizes applied (${r.code_name}, target ${r.target}) —`,
+      ...r.groups.filter((g) => g.changed).map((g) => `${g.section}: ${g.from} → ${g.to} (max utilisation ${g.max_util?.toFixed(2) ?? "–"})`)] });
+    setRes(null);
+    await s.analyze();
+    s.set({ mode: "design", designTab: "steel" });
+  };
+  const kg = (v: number | null) => (v == null ? "–" : v >= 10000 ? `${(v / 1000).toFixed(1)} t` : `${v.toFixed(0)} kg`);
+  const tot = (k: "mass_before" | "mass_after") => res ? res.groups.reduce((a, g) => a + (g[k] ?? 0), 0) : 0;
+  return (
+    <div className="mb-2 rounded border border-ink-700 p-1.5">
+      <button className="w-full flex justify-between items-center text-ink-200 font-semibold" onClick={() => setOpen(!open)}>
+        <span>Suggest sizes</span><span className="text-ink-500">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div className="mt-1.5">
+          <div className="text-ink-400 mb-1.5">For each section group, the lightest standard size that passes the steel checks. The server analyses again after every change until the sizes stop changing, then checks the final model.</div>
+          <table className="w-full mb-1.5">
+            <tbody>
+              {steelSecs.map(([k, sec]) => (
+                <tr key={k} className="border-t border-ink-800">
+                  <td className="py-0.5 pr-1"><b className="text-ink-200">{k}</b> <span className="text-ink-500 truncate">{sec.catalog ?? sec.shape}</span></td>
+                  <td className="w-[104px]">
+                    <select className="input !py-0" value={groups[k] ?? "keep"} onChange={(e) => setGroups({ ...groups, [k]: e.target.value })}>
+                      {FAMILY_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <label className="flex items-center justify-between gap-2 mb-1.5 text-ink-400">
+            <span>Target utilisation</span>
+            <input className="input !w-16 text-right" type="number" min={0.3} max={1} step={0.05} value={target} onChange={(e) => setTarget(Math.min(1, Math.max(0.3, +e.target.value || 1)))} />
+          </label>
+          <label className="flex items-start gap-1.5 mb-1.5 text-ink-400 cursor-pointer">
+            <input type="checkbox" className="mt-0.5 accent-sky-400" checked={slender} onChange={(e) => setSlender(e.target.checked)} />
+            <span>Limit slenderness: KL/r ≤ 200 in compression, L/r ≤ 300 in tension (AISC user notes)</span>
+          </label>
+          <button className="btn-primary w-full mb-1" disabled={busy || s.busy} onClick={run}>{busy ? "Sizing (analysing several times)…" : "Suggest sizes"}</button>
+          {err && <div className="mb-1 rounded border border-red-500/40 bg-red-500/10 p-1.5 text-red-200">{err}</div>}
+          {res && (
+            <>
+              <div className="flex items-center justify-between mt-1 mb-0.5">
+                <span className="text-ink-300">{res.converged ? `Settled after ${res.iterations} passes` : `Still changing after ${res.iterations} passes`}</span>
+                <span className="tag bg-emerald-500/15 text-emerald-300">CALCULATED</span>
+              </div>
+              <table className="w-full mb-1">
+                <thead><tr className="text-ink-500 text-[10px]"><th className="text-left font-normal">Group</th><th className="text-left font-normal">Suggested</th><th className="text-right font-normal">Util.</th></tr></thead>
+                <tbody>
+                  {res.groups.map((g) => (
+                    <tr key={g.section} className="border-t border-ink-800 align-top" title={`was ${g.from}`}>
+                      <td className="py-0.5 font-mono text-ink-200">{g.section}</td>
+                      <td className={g.changed ? "text-accent" : "text-ink-400"}>{g.to.replace(/ \S+$/, "")}{g.locked ? " (kept)" : ""}{g.largest_too_small ? " ⚠ largest" : ""}
+                        <div className="text-[10px] text-ink-500">was {g.from.replace(/ \S+$/, "")} · {kg(g.mass_before)} → {kg(g.mass_after)}</div></td>
+                      <td className={`num text-right ${g.max_util != null && g.max_util > 1 ? "text-red-300" : "text-ink-200"}`}>{g.max_util?.toFixed(2) ?? "–"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="text-ink-400 mb-1">Steel weight of these groups: {kg(tot("mass_before"))} → <b className="text-ink-200">{kg(tot("mass_after"))}</b>. Final check: {res.design.summary.ok} OK, {res.design.summary.fail} over 1.0, max {res.design.summary.max_util?.toFixed(2) ?? "–"}.</div>
+              <ul className="list-disc pl-4 space-y-0.5 text-ink-500 mb-1.5">{res.notes.map((n, k) => <li key={k}>{n}</li>)}</ul>
+              <div className="flex gap-1">
+                <button className="btn flex-1" onClick={() => setRes(null)}>Discard</button>
+                <button className="btn-primary flex-1" disabled={s.busy} onClick={apply}>Apply and re-design</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

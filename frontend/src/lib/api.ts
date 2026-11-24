@@ -1,4 +1,4 @@
-import type { BucklingResult, Model, PDeltaResult, RcDesignResult, Results, SteelDesignResult } from "./types";
+import type { BucklingResult, Model, PDeltaResult, RcDesignResult, Results, SteelCatalog, SteelDesignResult, SuggestResult } from "./types";
 
 const BASE = (import.meta as unknown as { env: Record<string, string> }).env.VITE_API_URL ?? "";
 
@@ -42,6 +42,13 @@ export const api = {
   pdelta: async (model: Model, load: string, n_seg = 2) =>
     ({ ...(await post<Omit<PDeltaResult, "kind">>("/api/stability", { model, load, kind: "pdelta", n_seg })), kind: "pdelta" as const }),
   steelDesign: (model: Model, code?: string) => post<SteelDesignResult>("/api/design/steel", { model, code }),
+  suggestSteel: (model: Model, code: string | undefined, target: number, groups: Record<string, string>, limit_slenderness = true) =>
+    post<SuggestResult>("/api/design/steel/suggest", { model, code, target, groups, limit_slenderness }),
+  catalog: async (): Promise<SteelCatalog> => {
+    const r = await fetch(`${BASE}/api/sections/catalog`);
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.json();
+  },
   rcDesign: (model: Model, options: Record<string, unknown>) => post<RcDesignResult>("/api/design/rc", { model, options }),
   importDxf: (dxf: string, options: Partial<DxfOptions>) => post<Model>("/api/import/dxf", { dxf, options }),
   report: (req: ReportRequest) => postBlob("/api/report", req),

@@ -69,6 +69,8 @@ interface State {
   runPDelta: () => Promise<void>;
   runSteel: () => Promise<void>;
   runRc: () => Promise<void>;
+  /** analyse, then re-run the steel design (and the RC design if it was shown) */
+  redesign: () => Promise<void>;
   saveProject: () => void;
   openProject: (text: string, fileName: string) => void;
 }
@@ -165,6 +167,12 @@ export const useStore = create<State>((set, get) => ({
     } finally {
       set({ steelBusy: false });
     }
+  },
+  redesign: async () => {
+    const hadRc = get().designTab === "rc";
+    await get().analyze();
+    if (get().error) return;
+    if (hadRc) await get().runRc(); else await get().runSteel();
   },
   runRc: async () => {
     const m = get().model;

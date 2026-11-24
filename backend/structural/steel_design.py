@@ -661,7 +661,8 @@ def ec3_member(g: Geo, fy, E, G, p: Params, forces: list[tuple[str, Forces]]) ->
                 MNy = Mply * (1 - nn ** 1.7)
                 MNz = Mplz * (1 - nn ** 1.7)
                 al = be = 2.0
-            cs = (np.abs(f.My) / MNy) ** al + (np.abs(f.Mz) / MNz) ** be                          # (6.41)
+            with np.errstate(divide="ignore", over="ignore", invalid="ignore"):   # MN = 0 once n >= 1: replaced below
+                cs = (np.abs(f.My) / MNy) ** al + (np.abs(f.Mz) / MNz) ** be                      # (6.41)
             cs = np.where(n >= 1, n, np.maximum(cs, n))
             clause = "6.2.9.1 (6.41)"
         else:
@@ -778,13 +779,35 @@ def member_params(e: dict, L: float) -> Params:
     return p
 
 
-def steel_design(model: dict, code: str | None = None, results: dict | None = None) -> dict:
-    """Check every steel member of the model for all ultimate combinations."""
-    from .analysis import analyze
+def member_forces(res: dict, combos: list, eid: str) -> list[tuple[str, Forces]]:
+    """Internal forces of one member for every design combination."""
+    return [(cid, f) for cid, fac in combos if (f := combine_member(res["cases"], eid, fac)) is not None]
+
+
+def check_member(sec: dict, mat: dict, p: Params, forces: list[tuple[str, Forces]], code: str) -> dict:
+    """All checks of one member with the given section, material and internal forces (raises NotCovered)."""
+    if not forces:
+        raise NotCovered("no results for this member")
+    fy = float(mat["fy"]) * 1000
+    mp = material_props(mat)
+    g = geometry(sec)
+    if code in ("AISC360", "EIT"):
+        return aisc_member(g, fy, mp["E"], mp["G"], p, forces, code)
+    return ec3_member(g, fy, mp["E"], mp["G"], p, forces)
+
+
+def resolve_code(model: dict, code: str | None = None) -> str:
     std = model.get("settings", {}).get("standard", "EN1990")
     code = code or model.get("settings", {}).get("steel_code") or CODE_FOR_STANDARD.get(std, "EC3")
     if code not in CODES:
         raise ValueError(f"Unknown steel design code '{code}'")
+    return code
+
+
+def steel_design(model: dict, code: str | None = None, results: dict | None = None) -> dict:
+    """Check every steel member of the model for all ultimate combinations."""
+    from .analysis import analyze
+    code = resolve_code(model, code)
     res = results or analyze(model)
     combos, gnotes = design_combinations(model)
     mats = {**MATERIALS, **model.get("materials", {})}
@@ -800,16 +823,11 @@ def steel_design(model: dict, code: str | None = None, results: dict | None = No
             members[e["id"]] = out
             continue
         L = float(np.linalg.norm(xyz[e["j"]] - xyz[e["i"]]))
-        forces = [(cid, f) for cid, fac in combos if (f := combine_member(res["cases"], e["id"], fac)) is not None]
-        fy = float(mat["fy"]) * 1000
-        mp = material_props(mat)
+        forces = member_forces(res, combos, e["id"])
         p = member_params(e, L)
-        out["params"] = {"L": L, "Ky": p.Ky, "Kz": p.Kz, "Lb": p.Llt, "Cb": p.Cb, "fy": fy / 1000}
+        out["params"] = {"L": L, "Ky": p.Ky, "Kz": p.Kz, "Lb": p.Llt, "Cb": p.Cb, "fy": float(mat["fy"])}
         try:
-            if not forces:
-                raise NotCovered("no results for this member")
-            g = geometry(sec)
-            r = aisc_member(g, fy, mp["E"], mp["G"], p, forces, code) if code in ("AISC360", "EIT") else ec3_member(g, fy, mp["E"], mp["G"], p, forces)
+            r = check_member(sec, mat, p, forces, code)
         except NotCovered as exc:
             out.update(status="not_covered", util=None, reason=str(exc), checks=[], notes=list(p.notes))
             counts["not_covered"] += 1
@@ -840,4 +858,4 @@ def steel_design(model: dict, code: str | None = None, results: dict | None = No
             "summary": {**counts, "max_util": max(utils) if utils else None, "n_checked": len(utils)}, "notes": gnotes}
 
 
-__all__ = ["steel_design", "CODES", "geometry", "aisc_fcr", "ec3_chi", "ec3_mcr", "aisc_flexure", "aisc_compression"]
+__all__ = ["steel_design", "check_member", "member_forces", "resolve_code", "CODES", "geometry", "aisc_fcr", "ec3_chi", "ec3_mcr", "aisc_flexure", "aisc_compression"]

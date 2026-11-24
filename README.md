@@ -208,6 +208,34 @@ combination and location, and to set its design values (K about each axis, unbra
   unbraced beam in the inelastic and elastic LTB ranges with Cb = 1.136 for uniform load, a pinned column (AISC E3,
   EN 1993 curve b), a tension member, a class 4 box with its effective area. 146 tests in total.
 
+### Changing sizes and suggested sizes
+
+The sections a generator gives are **starting sizes, not designed sizes**. You can change them in two ways:
+
+- **Sections tab.** Click a section to change its shape and size for every member that uses it. Pick a
+  **standard size** or type **your own dimensions** (I/H, box, tube, rectangle or circle), and choose the material.
+  *Save, analyse and re-design* applies the change, analyses again and re-runs the design. *New section* adds a
+  section id, which you can then give to selected members in the right panel.
+- **Suggest sizes** (Design mode, steel tab). For each section group (all members with the same section id), this
+  finds the lightest standard size that passes the steel checks at a target utilisation (default 1.0). Per group you
+  can keep the shape, switch to H, SHS, RHS or CHS, or lock the size.
+  - The server analyses again after every change, because the forces depend on the sizes. It repeats until no size
+    changes, and then checks the final model from scratch. The numbers shown come from that final check.
+  - Optionally, slenderness is limited to KL/r ≤ 200 in compression and L/r ≤ 300 in tension (AISC 360-16 user notes).
+  - *Apply and re-design* puts the sizes in the model.
+- **Standard sizes** (`structural/steel_catalog.py`):
+  - H sections to TIS 1227 / JIS G 3192 (narrow, medium and wide flange).
+  - SHS and RHS to JIS G 3466.
+  - CHS to JIS G 3444.
+
+  Only nominal dimensions are stored. Properties are calculated without root or corner radii, so they come out a
+  little below the supplier's tables.
+- Suggested sizes cover only the implemented strength checks. Deflection, vibration, connections and the other items
+  in the design notes are not part of the sizing.
+- **Tests:** `tests/test_steel_sizing.py`. They check that the final check passes and equals a normal design run, that
+  one size lighter fails, that locking, family changes and the target work, that the slenderness limits hold, and
+  that a group is reported when even the largest size is too small.
+
 ## RC beam and column design (Thai EIT 1008-38)
 
 In **Design** mode (key `9`), the *RC (Thai EIT)* tab designs the reinforcement of every rectangular concrete beam and
