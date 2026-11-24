@@ -131,6 +131,28 @@ Run the solver tests: `cd backend && python -m pytest -q`
   section properties, the top chord force wL²/(8h) of the generated truss, equilibrium of every generator, and
   bracing reducing drift.
 
+## More truss and roof types
+
+- **12 planar truss types**:
+  - Parallel chords: Pratt, Howe, Warren, Warren with verticals, K-truss.
+  - Roof trusses: pitched Pratt, pitched Howe, Fink (W), fan, scissors, mono-pitch, bowstring.
+- **Steel warehouse roof options**: any of the roof trusses or a **portal frame** (I-section rafters rigid to the columns).
+  - **Multi-span**: several spans share the internal column lines. Mono-pitch spans give a saw-tooth roof.
+- **Lattice roofs** (new *Lattice roof* type):
+  - Single-layer tube **barrel vault**: braced, cross-braced or ribbed.
+  - Spherical **dome**: Schwedler, lamella or ribbed.
+  - Joints are rigid and the roof is pinned along the springing line.
+  - The app warns that buckling and snap-through are not checked.
+- **Generate panel**: picture buttons for every truss, warehouse roof, vault and dome pattern, plus a live preview.
+- **Verification**:
+  - Member forces of every truss type, with and without depth at the supports, are compared against an independent
+    2D bar solver.
+  - Fink truss checked by hand calculation.
+  - Warren bottom chord force = M/h.
+  - Load totals and stability of every warehouse roof and multi-span layout.
+  - Equal base reactions in the domes (rotational symmetry).
+  - 102 tests in total.
+
 ## Not yet included (planned)
 
 - Tension-only bracing, member buckling, rigid diaphragms, spring supports, openings in walls and slabs.
