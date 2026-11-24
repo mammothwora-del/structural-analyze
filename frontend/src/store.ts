@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { api } from "./lib/api";
 import type { PathDir, TraceResult } from "./lib/loadpath";
 import type { ShellComp } from "./lib/shells";
-import type { BucklingResult, ForceComp, Load, Mode, Model, PDeltaResult, Results, SteelDesignResult } from "./lib/types";
+import type { BucklingResult, ForceComp, Load, Mode, Model, PDeltaResult, RcDesignResult, Results, SteelDesignResult } from "./lib/types";
 import { U, type UnitSystem } from "./lib/units";
 
 export type Selection = { kind: "element" | "node" | "slab" | "wall"; id: string } | null;
@@ -47,6 +47,11 @@ interface State {
   steelCode: string;            // "" = from the model's standard
   steelBusy: boolean;
   steelError: string | null;
+  designTab: "steel" | "rc";
+  rc: RcDesignResult | null;
+  rcOptions: { main_grade: string; tie_grade: string; cover: number };
+  rcBusy: boolean;
+  rcError: string | null;
   set: (p: Partial<State>) => void;
   setModel: (m: Model, keepResults?: boolean) => void;
   editModel: (fn: (m: Model) => void) => void;
@@ -57,13 +62,14 @@ interface State {
   runBuckling: (nSeg: number, nModes: number) => Promise<void>;
   runPDelta: () => Promise<void>;
   runSteel: () => Promise<void>;
+  runRc: () => Promise<void>;
 }
 
 /** Id under which a P-Delta result is added to the result cases (selectable like a load case). */
 export const pdeltaId = (load: string) => `PD:${load}`;
 /** The load case or combination behind a selection (a P-Delta result id maps back to its load). */
 export const baseLoad = (sel: string) => (sel.startsWith("PD:") ? sel.slice(3) : sel);
-const NO_STAB = { buckling: null, pdelta: null, stabError: null, steel: null, steelError: null };
+const NO_STAB = { buckling: null, pdelta: null, stabError: null, steel: null, steelError: null, rc: null, rcError: null };
 
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
 
@@ -72,7 +78,8 @@ export const useStore = create<State>((set, get) => ({
   mode: "model", view: "3d", loadSel: "DL", selection: null, multi: [],
   forceComp: "My", shellComp: "vm", deformScale: 50, animate: true, showLabels: false, showSlabs: true,
   hiddenTypes: {}, maxLevel: null, exploded: 0, ortho: false, pathDir: "auto", trace: null, isolated: null,
-  bottomTab: "log", log: [], history: [], buckling: null, pdelta: null, bucklingMode: 0, stabBusy: false, stabError: null, steel: null, steelCode: "", steelBusy: false, steelError: null, colorTransform: "sqrt", units: (() => { try { return (localStorage.getItem("units") as UnitSystem) || "SI"; } catch { return "SI"; } })(),
+  bottomTab: "log", log: [], history: [], buckling: null, pdelta: null, bucklingMode: 0, stabBusy: false, stabError: null, steel: null, steelCode: "", steelBusy: false, steelError: null,
+  designTab: "steel", rc: null, rcOptions: { main_grade: "SD40", tie_grade: "SR24", cover: 0.04 }, rcBusy: false, rcError: null, colorTransform: "sqrt", units: (() => { try { return (localStorage.getItem("units") as UnitSystem) || "SI"; } catch { return "SI"; } })(),
   set: (p) => set(p),
   setModel: (m, keepResults = false) => set({ ...NO_STAB, model: m, results: keepResults ? get().results : null, resultsStale: false, trace: null, selection: null }),
   editModel: (fn) => {
@@ -137,7 +144,7 @@ export const useStore = create<State>((set, get) => ({
   runSteel: async () => {
     const m = get().model;
     if (!m) return;
-    set({ steelBusy: true, steelError: null, mode: "design" });
+    set({ steelBusy: true, steelError: null, mode: "design", designTab: "steel" });
     try {
       const r = await api.steelDesign(m, get().steelCode || undefined);
       const s = r.summary;
@@ -148,6 +155,22 @@ export const useStore = create<State>((set, get) => ({
       set({ steelError: msg, log: [...get().log, `[ERROR] Steel design failed: ${msg}`] });
     } finally {
       set({ steelBusy: false });
+    }
+  },
+  runRc: async () => {
+    const m = get().model;
+    if (!m) return;
+    set({ rcBusy: true, rcError: null, mode: "design", designTab: "rc" });
+    try {
+      const r = await api.rcDesign(m, get().rcOptions);
+      const s = r.summary;
+      set({ rc: r, log: [...get().log, `— RC design (${r.code_name}) —`,
+        `${s.n_checked} members designed for ${r.combinations.join(", ")}: ${s.ok} OK, ${s.fail} over 1.0, ${s.not_covered} not covered${s.skipped ? `, ${s.skipped} not concrete` : ""}.${s.max_util != null ? ` Max utilisation ${s.max_util.toFixed(2)}.` : ""}`] });
+    } catch (e) {
+      const msg = String((e as Error).message);
+      set({ rcError: msg, log: [...get().log, `[ERROR] RC design failed: ${msg}`] });
+    } finally {
+      set({ rcBusy: false });
     }
   },
   runPDelta: async () => {

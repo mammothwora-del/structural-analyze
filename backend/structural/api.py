@@ -83,6 +83,22 @@ def run_steel_design(req: dict):
         raise HTTPException(400, f"Invalid request: {exc!r}") from exc
 
 
+@app.post("/api/design/rc")
+def run_rc_design(req: dict):
+    """{"model": {...}, "options": {"main_grade": "SD40", "tie_grade": "SR24", "cover": 0.04, ...}}"""
+    from .rc_design import GRADES, rc_design
+    try:
+        opt = req.get("options") or {}
+        for k in ("main_grade", "tie_grade"):
+            if k in opt and opt[k] not in GRADES:
+                raise ValueError(f"unknown rebar grade {opt[k]!r}")
+        return _r(rc_design(req["model"], opt))
+    except ModelError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except (KeyError, ValueError, IndexError, TypeError) as exc:
+        raise HTTPException(400, f"Invalid request: {exc!r}") from exc
+
+
 # Serve the built frontend (frontend/dist) when present.
 _dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if _dist.exists():

@@ -99,3 +99,15 @@ export interface SteelDesignResult {
   summary: { ok: number; fail: number; not_covered: number; skipped: number; max_util: number | null; n_checked: number };
   notes: string[];
 }
+
+export interface RcMember extends Omit<SteelMember, "params" | "props"> {
+  kind?: "beam" | "column";
+  params?: { fc_ksc: number; fy_ksc: number; fyt_ksc: number; L: number };
+  /** beams: bottom/top/stirrups/side; columns: bars/layout/rho_percent/ties. sketch = [y, z, db] in m from the centre */
+  rebar?: Record<string, string | number> & { sketch?: number[][] };
+}
+export interface RcDesignResult {
+  code: "EIT1008"; code_name: string; combinations: string[]; members: Record<string, RcMember>;
+  options: { main_grade: string; tie_grade: string; cover: number };
+  summary: SteelDesignResult["summary"]; notes: string[];
+}

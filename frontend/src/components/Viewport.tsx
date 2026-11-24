@@ -31,7 +31,7 @@ export const MODES: { id: Mode; label: string; needs?: boolean; key: string }[] 
   { id: "forces", label: "Internal Forces", needs: true, key: "6" },
   { id: "reactions", label: "Foundation Reactions", needs: true, key: "7" },
   { id: "stability", label: "Stability", key: "8" },
-  { id: "design", label: "Steel Design", key: "9" },
+  { id: "design", label: "Design", key: "9" },
 ];
 
 type ViewName = "iso" | "top" | "front" | "right";
@@ -81,7 +81,7 @@ export function Viewport() {
   const showResults = needsResults && usable && res;
   const trMax = trace ? Math.max(...Object.values(trace.elements)) : 1;
   const bMode = mode === "stability" ? s.buckling?.modes[s.bucklingMode] ?? null : null;
-  const dDisplay = mode === "design" ? designDisplay(s.steel) : null;
+  const dDisplay = mode === "design" ? designDisplay(s.designTab === "rc" ? s.rc : s.steel) : null;
 
   return (
     <div ref={wrap} className="relative flex-1 min-h-0 bg-[radial-gradient(ellipse_at_center,_#16202b_0%,_#0b0f14_75%)]">

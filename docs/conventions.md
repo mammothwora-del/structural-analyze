@@ -106,7 +106,9 @@ The integrated values at end j are checked against the FE nodal solution (`end_c
 | Effective length factors K, unbraced length, Cb / C1 | **Assumed** K = 1.0 and unbraced length = member length unless set per member; Cb / C1 from the moment diagram |
 | Hollow-section buckling curve (EN 1993) | **Assumed** cold-formed (curve c) unless the section says `fab: "hot"` |
 | Connections, net section, web crippling, open-section torsion, seismic detailing | **Not** checked |
-| RC design | Not implemented yet |
+| RC beam and column reinforcement (EIT 1008-38 / ACI 318-95) | Calculated for the listed clauses (verified against hand calculations); members outside them reported **not covered** |
+| RC column slenderness | **Assumed** nonsway (braced), k = 1.0, Lu = member length |
+| RC deflection, cracking, anchorage, joints, seismic detailing, slabs, walls, footings | **Not** designed |
 
 ## Steel design (`structural/steel_design.py`)
 * Design forces: linear superposition of the load-case results for each ultimate combination (combinations whose id

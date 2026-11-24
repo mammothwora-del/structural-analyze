@@ -201,9 +201,27 @@ combination and location, and to set its design values (K about each axis, unbra
   unbraced beam in the inelastic and elastic LTB ranges with Cb = 1.136 for uniform load, a pinned column (AISC E3,
   EN 1993 curve b), a tension member, a class 4 box with its effective area. 146 tests in total.
 
-## Not yet included (planned)
+## RC beam and column design (Thai EIT 1008-38)
 
-- RC beam and column rebar design (Thai EIT strength design): in progress.
+In **Design** mode (key `9`), the *RC (Thai EIT)* tab designs the reinforcement of every rectangular concrete beam and
+column for all ultimate combinations (pick the main bar grade SD30/SD40/SD50, stirrup grade and cover). EIT 1008-38
+follows ACI 318-95 strength design; the equations use kgf, cm and ksc as in Thai practice.
+
+- **Beams**: bottom and top bars for the largest positive and negative moments (rho_min, 4/3 rule, rho <= 0.75 rho_b,
+  bars fitted in one or two layers with clear spacing >= db and 2.5 cm); stirrups for the largest shear (Vc = 0.53
+  sqrt(fc') bw d, spacing limits d/2 or d/4, minimum Av); torsion above the threshold with closed stirrups, longitudinal
+  Al (top, bottom and side bars) and the section-size check (11-18).
+- **Columns** (tied): bars around the perimeter (1 % to 8 %), P-M interaction about both axes by strain compatibility,
+  phi from 0.70 to 0.90, 0.80 P0 cap, biaxial bending by the linear load contour (conservative), nonsway slenderness
+  magnification with k = 1.0 assumed, ties (16 db, 48 tie diameters, least dimension) and shear with axial load.
+- Click a member to see the bars drawn in its section, the stirrups / ties and every check with its clause.
+- Not designed: deflection and cracking, anchorage / laps / curtailment, beam-column joints, seismic detailing,
+  slabs, walls, footings, circular or spiral columns. If the combinations are not the Thai ones, the app says so.
+- **Verification** (`tests/test_rc_design.py`, 9 tests): beta1 and rho_b (0.0262 for fc' 240 ksc, SD40), the
+  singly reinforced section, a strain-compatibility point worked by hand, the column axial limit and phi, the
+  moment magnifier, and a simply supported beam (bars, stirrup spacing, phi Vn) worked by hand. 155 tests in total.
+
+## Not yet included (planned)
 - PDF calculation reports, project files, DXF import: in progress.
 - Tension-only bracing, rigid diaphragms, spring supports, openings in walls and slabs.
 - Copy/move/rotate tools, snapping, IFC import, OBJ/GLTF export, database storage.
