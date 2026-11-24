@@ -106,6 +106,7 @@ export function Members({ model, results, display, deform, colorMode, highlight,
           return colorAt(0.15 + 0.85 * (v / (highlightMax || 1)), new THREE.Color());
         }
         if (colorMode === "values" && vals && display) return colorAt(normalize(vals[k], display.scale), new THREE.Color());
+        if (colorMode === "values" && display && !display.res) return new THREE.Color("#3a4656");   // not part of a per-member value set
         if (colorMode === "neutral") return new THREE.Color("#5b6b7e");
         return col.set(TYPE_COLORS[elementColorKey(el)]).clone();
       });

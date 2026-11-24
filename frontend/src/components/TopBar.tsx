@@ -54,7 +54,8 @@ export function TopBar() {
       ["Load cases", () => set({ bottomTab: "cases" })],
       ["Combinations", () => set({ bottomTab: "combos" })],
     ],
-    Analyze: [["Run linear static analysis  (F5)", () => analyze(), !model], ["Stability: buckling and P-Delta  (8)", () => set({ mode: "stability", view: "3d" }), !model]],
+    Analyze: [["Run linear static analysis  (F5)", () => analyze(), !model], ["Stability: buckling and P-Delta  (8)", () => set({ mode: "stability", view: "3d" }), !model],
+      ["Steel member design  (9)", () => set({ mode: "design", view: "3d" }), !model]],
     Results: [...MODES.filter((m) => m.needs).map((m) => [m.label, () => set({ mode: m.id, view: "3d" }), !results] as [string, () => void, boolean]),
       ["Dashboard", () => set({ view: "dashboard" }), !results], ["Reactions table", () => set({ bottomTab: "reactions" }), !results], ["Member results table", () => set({ bottomTab: "members" }), !results]],
     Export: [

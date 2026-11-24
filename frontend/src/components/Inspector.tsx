@@ -9,6 +9,7 @@ import { useStore, useU } from "../store";
 import type { UnitsApi } from "../lib/units";
 import { COMP_KIND } from "../lib/display";
 import { elementReleases, isHinged } from "../lib/geometry";
+import { fmtCheck, statusTag } from "./DesignPanel";
 
 const Row = ({ k, v, unit }: { k: React.ReactNode; v: React.ReactNode; unit?: string }) => (
   <div className="flex justify-between gap-2 py-0.5 border-b border-ink-800/80">
@@ -46,7 +47,7 @@ function EmptyPanel() {
     <div className="text-ink-400 text-xs leading-relaxed">
       <div className="panel-title mb-2">Properties & Results</div>
       <p>Click a member, node or slab in the 3D view to inspect it. Shift/Ctrl-click to multi-select members (or nodes, to add a member between two nodes).</p>
-      <p className="mt-2">Keyboard: <span className="num">1–8</span> switch modes, <span className="num">Del</span> deletes the selected member, <span className="num">Ctrl+Z</span> undo, <span className="num">F5</span> analyze.</p>
+      <p className="mt-2">Keyboard: <span className="num">1–9</span> switch modes, <span className="num">Del</span> deletes the selected member, <span className="num">Ctrl+Z</span> undo, <span className="num">F5</span> analyze.</p>
     </div>
   );
 }
@@ -183,6 +184,7 @@ function ElementPanel({ model, results, id }: { model: Model; results: Results |
         <Row k="Supports at ends" v={supports.length ? supports.map((s) => `${s!.node} (${supportLabel(s!)})`).join(", ") : "none"} />
       </Section>
       <EndReleases ids={[id]} />
+      <SteelDesignSection model={model} id={id} />
 
       {!results && <div className="mt-4 text-xs text-ink-400">Run ANALYZE to see internal forces, stresses, displacements and load transfer.</div>}
 
@@ -481,5 +483,69 @@ function MultiPanel({ model }: { model: Model }) {
         <button className="btn text-red-300" onClick={() => { editModel((m) => { m.elements = m.elements.filter((e) => !els.includes(e.id)); }); set({ multi: [] }); }}>Delete all</button>
       </div>
     </div>
+  );
+}
+
+/** Steel design settings (effective lengths) and the check results of one member. */
+function SteelDesignSection({ model, id }: { model: Model; id: string }) {
+  const u = useU();
+  const { steel, editModel, set } = useStore();
+  const el = model.elements.find((e) => e.id === id);
+  const sec = el ? model.sections[el.section] : undefined;
+  const r = steel?.members[id];
+  const isSteel = (model.materials[sec?.material ?? ""]?.kind ?? (r && r.status !== "skipped" ? "steel" : "")) === "steel";
+  if (!el || !isSteel) return null;
+  const d = el.design ?? {};
+  const setD = (k: "Ky" | "Kz" | "Lb" | "Cb", v: string) => editModel((m) => {
+    const e = m.elements.find((x) => x.id === id)!;
+    const nd = { ...(e.design ?? {}) };
+    if (v === "" || !isFinite(+v) || +v <= 0) delete nd[k]; else nd[k] = k === "Lb" ? u.si("length", +v) : +v;
+    if (Object.keys(nd).length) e.design = nd; else delete e.design;
+  });
+  const Field = ({ k, label, hint, unit }: { k: "Ky" | "Kz" | "Lb" | "Cb"; label: string; hint: string; unit?: string }) => (
+    <label className="flex items-center justify-between gap-2 py-0.5" title={hint}>
+      <span className="text-ink-400">{label}</span>
+      <span className="flex items-center gap-1">
+        <input className="input !w-20 text-right" placeholder={k === "Lb" ? "member" : k === "Cb" ? "auto" : "1.0"}
+          defaultValue={d[k] != null ? (k === "Lb" ? u.f("length", d[k]!, 3) : String(d[k])) : ""} key={`${id}-${k}-${d[k] ?? ""}`}
+          onBlur={(e) => setD(k, e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+        <span className="w-6 text-ink-500">{unit}</span>
+      </span>
+    </label>
+  );
+  return (
+    <Section title="Steel design" tag={r && r.status !== "skipped" ? statusTag(r) : undefined}>
+      <Field k="Ky" label="K major axis (y)" hint="Effective length factor for flexural buckling about the major axis" />
+      <Field k="Kz" label="K minor axis (z)" hint="Effective length factor for flexural buckling about the minor axis (also torsional)" />
+      <Field k="Lb" label="Unbraced length (LTB)" hint="Distance between lateral restraints of the compression flange; blank = member length" unit={u.u("length")} />
+      <Field k="Cb" label="Cb / C1" hint="Moment gradient factor; blank = from the moment diagram" />
+      <div className="text-[11px] text-ink-500 mb-1">K = 1.0 means braced against sway at both ends. Changing a value clears the design results.</div>
+      {!r && <button className="btn w-full" onClick={() => { set({ mode: "design" }); useStore.getState().runSteel(); }}>Check steel members</button>}
+      {r?.status === "not_covered" && <div className="text-amber-300 text-[11px]">Not covered: {r.reason}</div>}
+      {r?.checks && r.checks.length > 0 && (
+        <>
+          <div className="text-[11px] text-ink-400 mt-1">{steel!.code_name} · utilisation <b className={r.util! > 1 ? "text-red-300" : "text-ink-100"}>{r.util!.toFixed(3)}</b> · {r.governing?.combo}</div>
+          <table className="w-full text-[11px] mt-1">
+            <thead className="text-ink-500"><tr><th className="text-left font-medium">Check</th><th className="text-right font-medium">Demand / capacity</th><th className="text-right font-medium pl-1">Ratio</th></tr></thead>
+            <tbody>
+              {r.checks.map((c) => {
+                const f = fmtCheck(c, u);
+                const tip = [`${c.clause} · ${c.combo} · x = ${u.f("length", c.x, 2)} ${u.u("length")}`, ...Object.entries(c.detail).map(([k, v]) => `${k} = ${typeof v === "number" ? (Math.abs(v) < 1e-3 || Math.abs(v) > 1e4 ? v.toExponential(3) : v.toFixed(3)) : v}`)].join("\n");
+                return (
+                  <tr key={c.id} className="border-t border-ink-800" title={tip}>
+                    <td className="py-0.5 text-ink-300">{c.name}<div className="text-[10px] text-ink-500">{c.clause} · {c.combo}</div></td>
+                    <td className="num text-right text-ink-300 whitespace-nowrap align-top pt-0.5">{f.d} / {f.cap}<div className="text-[10px] text-ink-500">{f.unit}</div></td>
+                    <td className={`num text-right align-top pt-0.5 pl-1 ${c.ratio > 1 ? "text-red-300" : c.ratio > 0.9 ? "text-amber-200" : "text-ink-100"}`}>{c.ratio.toFixed(2)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {r.props?.class != null && <div className="text-[11px] text-ink-400 mt-1">Section class {String(r.props.class)}: {String(r.props.class_detail)}</div>}
+          {r.notes && r.notes.length > 0 && <ul className="mt-1 list-disc pl-4 space-y-0.5 text-[11px] text-ink-500">{r.notes.map((n, k) => <li key={k}>{n}</li>)}</ul>}
+          <div className="text-[10px] text-ink-600 mt-1">Hover a row for the clause, location and intermediate values.</div>
+        </>
+      )}
+    </Section>
   );
 }
