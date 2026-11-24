@@ -55,7 +55,7 @@ interface State {
   rcBusy: boolean;
   rcError: string | null;
   dialog: null | "dxf" | "report";
-  reportInfo: { engineer: string; project: string };
+  reportInfo: { engineer: string; project: string; lang?: "en" | "th" };
   set: (p: Partial<State>) => void;
   setModel: (m: Model, keepResults?: boolean) => void;
   editModel: (fn: (m: Model) => void) => void;
@@ -195,7 +195,7 @@ export const useStore = create<State>((set, get) => ({
         ...(settings.units ? { units: settings.units } : {}),
         ...(settings.steelCode != null ? { steelCode: settings.steelCode } : {}),
         ...(settings.rcOptions ? { rcOptions: settings.rcOptions } : {}),
-        reportInfo: { engineer: settings.report?.engineer ?? "", project: settings.report?.project ?? "" },
+        reportInfo: { engineer: settings.report?.engineer ?? "", project: settings.report?.project ?? "", lang: settings.report?.lang },
         log: [...get().log, `Opened ${fileName}: "${model.name}", ${model.elements.length} members, ${model.nodes.length} nodes${savedAt ? ` (saved ${new Date(savedAt).toLocaleString()})` : ""}. Run the analysis to calculate results.`],
       });
     } catch (e) {

@@ -8,9 +8,11 @@ The report never states that the structure is safe or code-compliant.
 from __future__ import annotations
 
 import base64
+import contextvars
 import datetime as dt
 import io
 from collections import Counter
+from pathlib import Path
 
 import numpy as np
 from reportlab.lib import colors
@@ -18,11 +20,14 @@ from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table,
                                 TableStyle)
 
 from .analysis import analyze
 from .sections import MATERIALS, section_properties
+from .report_i18n import TH, check_name_th, rebar_th, thai_date
 from .steel_design import combine_member, design_combinations
 
 INCLUDE_DEFAULTS = {"model": True, "loads": True, "analysis": True, "members": True, "stability": False,
@@ -47,21 +52,76 @@ class ReportError(ValueError):
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# language: English (built-in Helvetica) or Thai (bundled Sarabun font, shaped with HarfBuzz)
+# ---------------------------------------------------------------------------------------------------------------
+LANGS = ("en", "th")
+FONT_DIR = Path(__file__).with_name("fonts")
+_LANG = contextvars.ContextVar("report_lang", default="en")
+
+
+def _th() -> bool:
+    return _LANG.get() == "th"
+
+
+def tr(key: str, en: str | None = None, **kw) -> str:
+    """Text in the report language. ``key`` is the English text, or a short key with the English given as ``en``."""
+    s = TH.get(key, en or key) if _th() else (en or key)
+    return s.format(**kw) if kw else s
+
+
+def _FN() -> str:
+    return "Sarabun" if _th() else "Helvetica"
+
+
+def _FB() -> str:
+    return "Sarabun-Bold" if _th() else "Helvetica-Bold"
+
+
+def _register_thai():
+    """Register the Thai font once. Thai needs text shaping (tone marks over vowels), done by uharfbuzz."""
+    try:
+        import uharfbuzz  # noqa: F401
+    except ImportError as exc:
+        raise ReportError("The Thai report needs the uharfbuzz library for Thai text: run "
+                          "'pip install -r backend/requirements.txt' (run.bat / run.sh do this on start).") from exc
+    if "Sarabun" in pdfmetrics.getRegisteredFontNames():
+        return
+    pdfmetrics.registerFont(TTFont("Sarabun", str(FONT_DIR / "Sarabun-Regular.ttf")))
+    pdfmetrics.registerFont(TTFont("Sarabun-Bold", str(FONT_DIR / "Sarabun-Bold.ttf")))
+    pdfmetrics.registerFontFamily("Sarabun", normal="Sarabun", bold="Sarabun-Bold", italic="Sarabun", boldItalic="Sarabun-Bold")
+
+
+def _rb(text) -> str:
+    """Bar description in the report language."""
+    return rebar_th(str(text)) if _th() else str(text)
+
+
+def _cname(name: str) -> str:
+    """Design check name in the report language."""
+    return check_name_th(name) if _th() else name
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # styles and small helpers
 # ---------------------------------------------------------------------------------------------------------------
 def _styles():
     ss = getSampleStyleSheet()
-    base = ParagraphStyle("base", parent=ss["Normal"], fontName="Helvetica", fontSize=8.5, leading=11, textColor=INK)
+    k = 1.12 if _th() else 1.0          # Sarabun has a smaller x-height than Helvetica: print it a little larger
+    kl = 1.32 if _th() else 1.0         # and Thai needs room above and below the line for vowels and tone marks
+    shp = 1 if _th() else 0
+    base = ParagraphStyle("base", parent=ss["Normal"], fontName=_FN(), fontSize=8.5 * k, leading=11 * kl, textColor=INK,
+                          shaping=shp, splitLongWords=0 if _th() else 1)   # never split a Thai word between a letter and its mark
     return {
         "base": base,
-        "small": ParagraphStyle("small", parent=base, fontSize=7.5, leading=9.5),
-        "muted": ParagraphStyle("muted", parent=base, fontSize=7.5, leading=9.5, textColor=MUTED),
-        "cell": ParagraphStyle("cell", parent=base, fontSize=7, leading=8.5),
-        "title": ParagraphStyle("title", parent=base, fontName="Helvetica-Bold", fontSize=20, leading=24, spaceAfter=4),
-        "h1": ParagraphStyle("h1", parent=base, fontName="Helvetica-Bold", fontSize=12.5, leading=16, spaceBefore=10,
+        "small": ParagraphStyle("small", parent=base, fontSize=7.5 * k, leading=9.5 * kl),
+        "muted": ParagraphStyle("muted", parent=base, fontSize=7.5 * k, leading=9.5 * kl, textColor=MUTED),
+        "cell": ParagraphStyle("cell", parent=base, fontSize=7 * k, leading=8.5 * kl),
+        "cellb": ParagraphStyle("cellb", parent=base, fontName=_FB(), fontSize=7 * k, leading=8.5 * kl),
+        "title": ParagraphStyle("title", parent=base, fontName=_FB(), fontSize=20, leading=26, spaceAfter=4),
+        "h1": ParagraphStyle("h1", parent=base, fontName=_FB(), fontSize=12.5, leading=17, spaceBefore=10,
                              spaceAfter=4, textColor=ACCENT),
-        "h2": ParagraphStyle("h2", parent=base, fontName="Helvetica-Bold", fontSize=9.5, leading=12, spaceBefore=6, spaceAfter=3),
-        "note": ParagraphStyle("note", parent=base, fontSize=8, leading=10.5, leftIndent=8, bulletIndent=0, alignment=TA_LEFT),
+        "h2": ParagraphStyle("h2", parent=base, fontName=_FB(), fontSize=9.5 * k, leading=12.5 * kl, spaceBefore=6, spaceAfter=3),
+        "note": ParagraphStyle("note", parent=base, fontSize=8 * k, leading=10.5 * kl, leftIndent=8, bulletIndent=0, alignment=TA_LEFT),
     }
 
 
@@ -72,13 +132,24 @@ _GLYPHS = {"α": "alpha", "β": "beta", "γ": "gamma", "δ": "delta", "Δ": "Del
            "′": "'", "−": "-", "≈": "~", "·": "·"}
 
 
+def _cmap() -> dict:
+    return pdfmetrics.getFont("Sarabun").face.charToGlyph
+
+
+def _is_thai(s: str) -> bool:
+    return any("\u0e00" <= ch <= "\u0e7f" for ch in s)
+
+
 def _t(s) -> str:
     s = str(s)
     if s.isascii():
         return s
+    cmap = _cmap() if _th() else None
     out = []
     for ch in s:
-        if ch in _GLYPHS:
+        if cmap is not None and ord(ch) in cmap and ch not in _GLYPHS:
+            out.append(ch)
+        elif ch in _GLYPHS:
             out.append(_GLYPHS[ch])
         else:
             try:
@@ -109,12 +180,48 @@ def _f(v, dg=2) -> str:
     return f"{v:.{dg}f}"
 
 
+_CELL = {}
+
+
+def _cell_style(bold: bool, right: bool) -> ParagraphStyle:
+    key = (_LANG.get(), bold, right)
+    if key not in _CELL:
+        st = _styles()
+        _CELL[key] = ParagraphStyle(f"c{key}", parent=st["cellb" if bold else "cell"], alignment=2 if right else 0)
+    return _CELL[key]
+
+
+def _fit_header_words(header, widths):
+    """Widen columns whose Thai header has a word wider than the column (Thai words cannot be split), taking the
+    room from the widest column."""
+    need = []
+    for c, w in zip(header, widths):
+        words = c.split() if isinstance(c, str) and _is_thai(c) else []
+        need.append(max([pdfmetrics.stringWidth(x, _FB(), 7.5) for x in words] + [0]) + 7)
+    widths = list(widths)
+    extra = sum(max(0.0, n - w) for n, w in zip(need, widths))
+    if extra <= 0:
+        return widths
+    big = max(range(len(widths)), key=lambda k: widths[k] - need[k])
+    for k, n in enumerate(need):
+        if k != big and n > widths[k]:
+            widths[k] = n
+    widths[big] = max(widths[big] - extra, need[big])
+    return widths
+
+
 def _table(rows, widths=None, header_rows=1, align_right_from=None, styles_extra=()):
     rows = [[_t(c) if isinstance(c, str) else c for c in row] for row in rows]
+    if _th():
+        widths = _fit_header_words(rows[0], widths) if header_rows and widths else widths
+        # Table cells are drawn without shaping: Thai text goes into shaped paragraphs
+        rows = [[Paragraph(_esc(c), _cell_style(r < header_rows, align_right_from is not None and k >= align_right_from))
+                 if isinstance(c, str) and _is_thai(c) else c for k, c in enumerate(row)] for r, row in enumerate(rows)]
+    fs = 7.5 if _th() else 7
     t = Table(rows, colWidths=widths, repeatRows=header_rows)
     st = [
-        ("FONT", (0, 0), (-1, -1), "Helvetica", 7),
-        ("FONT", (0, 0), (-1, header_rows - 1), "Helvetica-Bold", 7),
+        ("FONT", (0, 0), (-1, -1), _FN(), fs),
+        ("FONT", (0, 0), (-1, header_rows - 1), _FB(), fs),
         ("TEXTCOLOR", (0, 0), (-1, -1), INK),
         ("BACKGROUND", (0, 0), (-1, header_rows - 1), colors.HexColor("#e5e7eb")),
         ("LINEBELOW", (0, header_rows - 1), (-1, header_rows - 1), 0.6, INK),
@@ -135,7 +242,7 @@ def _table(rows, widths=None, header_rows=1, align_right_from=None, styles_extra
 
 
 def _tag(kind: str) -> str:
-    return f'<font size="7" color="{TAG[kind].hexval().replace("0x", "#")}"><b>[{kind}]</b></font>'
+    return f'<font size="7" color="{TAG[kind].hexval().replace("0x", "#")}"><b>[{tr(kind)}]</b></font>'
 
 
 class _Doc:
@@ -217,8 +324,22 @@ def _member_envelope(model, res, loads):
 # report
 # ---------------------------------------------------------------------------------------------------------------
 def build_report(model: dict, include: dict | None = None, steel_code: str | None = None, rc_options: dict | None = None,
-                 image_png: str | None = None, stability_load: str | None = None, project: dict | None = None) -> bytes:
-    """Return the PDF bytes. ``image_png`` is an optional base64 PNG (data URL or raw) of the 3D view."""
+                 image_png: str | None = None, stability_load: str | None = None, project: dict | None = None,
+                 lang: str = "en") -> bytes:
+    """Return the PDF bytes. ``image_png`` is an optional base64 PNG (data URL or raw) of the 3D view.
+    ``lang`` "en" or "th" (Thai headings, tables and notes; numbers and clause references unchanged)."""
+    if lang not in LANGS:
+        raise ReportError(f"unknown report language {lang!r} (use 'en' or 'th')")
+    if lang == "th":
+        _register_thai()
+    token = _LANG.set(lang)
+    try:
+        return _build(model, include, steel_code, rc_options, image_png, stability_load, project)
+    finally:
+        _LANG.reset(token)
+
+
+def _build(model, include, steel_code, rc_options, image_png, stability_load, project) -> bytes:
     inc = {**INCLUDE_DEFAULTS, **(include or {})}
     project = project or {}
     st = _styles()
@@ -242,78 +363,81 @@ def build_report(model: dict, include: dict | None = None, steel_code: str | Non
         try:
             steel = steel_design(model, steel_code or None, results=res)
         except (ValueError, KeyError) as exc:
-            errors.append(f"Steel design could not run: {exc}")
+            errors.append(tr("Steel design could not run: {e}", e=exc))
     if inc["rc"] and has_conc:
         from .rc_design import rc_design
         try:
             rc = rc_design(model, rc_options or {}, results=res)
         except (ValueError, KeyError) as exc:
-            errors.append(f"RC design could not run: {exc}")
+            errors.append(tr("RC design could not run: {e}", e=exc))
     if inc["stability"]:
         from .stability import buckling
         load = stability_load or (combos[0][0] if combos else (loads[0][0] if loads else None))
         try:
             buck = buckling(model, load, n_modes=4) if load else None
         except (ValueError, KeyError) as exc:
-            errors.append(f"Buckling analysis could not run for {load}: {exc}")
+            errors.append(tr("Buckling analysis could not run for {load}: {e}", load=load, e=exc))
 
     # ------------------------------------------------------------------ title block
-    d.p(_esc(project.get("title") or model.get("name") or "Structural model"), "title")
-    d.p("Calculation report: 3D linear analysis" + (" and member design" if (steel or rc) else ""), "h2")
-    meta = [["Project", _esc(project.get("project") or model.get("name", "–"))],
-            ["Engineer", _esc(project.get("engineer") or "–")],
-            ["Date", now.strftime("%d %B %Y, %H:%M")],
-            ["Design standard (loads)", {"EN1990": "EN 1990 (Eurocode)", "ASCE7": "ASCE 7", "TH": "Thai (DPT / EIT)"}.get(std, std)],
-            ["Units", "kN, m (forces kN, moments kN·m, displacements mm where noted)"],
-            ["Software", "Structural Analyze (open source); report generated from the model at the time of printing"]]
+    d.p(_esc(project.get("title") or model.get("name") or tr("Structural model")), "title")
+    d.p(tr("Calculation report: 3D linear analysis and member design" if (steel or rc) else "Calculation report: 3D linear analysis"), "h2")
+    meta = [[tr("Project"), project.get("project") or model.get("name", "–")],
+            [tr("Engineer"), project.get("engineer") or "–"],
+            [tr("Date"), thai_date(now) if _th() else now.strftime("%d %B %Y, %H:%M")],
+            [tr("Design standard (loads)"), tr({"EN1990": "EN 1990 (Eurocode)", "ASCE7": "ASCE 7", "TH": "Thai (DPT / EIT)"}.get(std, std))],
+            [tr("Units"), tr("kN, m (forces kN, moments kN·m, displacements mm where noted)")],
+            [tr("Software"), tr("Structural Analyze (open source); report generated from the model at the time of printing")]]
     d.add(_table([["", ""]] + meta, widths=[45 * mm, 125 * mm], header_rows=1,
                  styles_extra=[("BACKGROUND", (0, 0), (-1, 0), colors.white), ("LINEBELOW", (0, 0), (-1, 0), 0, colors.white),
-                               ("FONT", (0, 1), (0, -1), "Helvetica-Bold", 7)]))
+                               ("FONT", (0, 1), (0, -1), _FB(), 7.5 if _th() else 7)]))
     d.gap(6)
-    d.p("<b>Scope of this report.</b> Every result below was calculated by the program from the model shown, at the time of "
-        "printing. Labels: " + _tag("INPUT") + " defined by the user or by a model generator; " + _tag("ASSUMED") +
-        " a default or simplification chosen by the program; " + _tag("CALCULATED") + " computed. "
-        "A utilisation at or below 1.0 means the member passes the checks listed for it. This report is <b>not</b> a "
-        "statement that the structure is safe or code-compliant: connections, foundations, overall stability, "
-        "serviceability, detailing and the items in the notes must be checked separately by a qualified engineer.", "small")
+    d.p(tr("SCOPE", "<b>Scope of this report.</b> Every result below was calculated by the program from the model shown, at "
+           "the time of printing. Labels: {INPUT} defined by the user or by a model generator; {ASSUMED} a default or "
+           "simplification chosen by the program; {CALCULATED} computed. A utilisation at or below 1.0 means the member "
+           "passes the checks listed for it. This report is <b>not</b> a statement that the structure is safe or "
+           "code-compliant: connections, foundations, overall stability, serviceability, detailing and the items in the "
+           "notes must be checked separately by a qualified engineer.",
+           INPUT=_tag("INPUT"), ASSUMED=_tag("ASSUMED"), CALCULATED=_tag("CALCULATED")), "small")
+    if _th():
+        d.p(tr("LANG_NOTE"), "muted")
     if image_png:
         img = _image(image_png)
         if img is not None:
             d.gap(6)
             d.add(img)
-            d.p("3D view of the model as shown on screen when the report was printed (illustration, not a result).", "muted")
+            d.p(tr("3D view of the model as shown on screen when the report was printed (illustration, not a result)."), "muted")
     for e in errors:
         d.p(f'<font color="#b91c1c">{_esc(e)}</font>', "small")
 
     # ------------------------------------------------------------------ model
     if inc["model"]:
         d.story.append(PageBreak())
-        d.h1("Model", "INPUT")
-        counts = [["Nodes", len(model["nodes"])], ["Members", len(model["elements"])],
-                  ["Slab panels", len(model.get("slabs", []))], ["Wall panels", len(model.get("walls", []))],
-                  ["Supports", len(model.get("supports", []))], ["Load cases", len(model.get("load_cases", []))],
-                  ["Combinations", len(model.get("combinations", []))]]
+        d.h1(tr("Model"), "INPUT")
+        counts = [[tr("Nodes"), len(model["nodes"])], [tr("Members"), len(model["elements"])],
+                  [tr("Slab panels"), len(model.get("slabs", []))], [tr("Wall panels"), len(model.get("walls", []))],
+                  [tr("Supports"), len(model.get("supports", []))], [tr("Load cases"), len(model.get("load_cases", []))],
+                  [tr("Combinations"), len(model.get("combinations", []))]]
         xyz = np.array([[n["x"], n["y"], n["z"]] for n in model["nodes"]], dtype=float)
         ext = xyz.max(0) - xyz.min(0) if len(xyz) else np.zeros(3)
-        counts.append(["Extent X × Y × Z (m)", f"{ext[0]:.2f} × {ext[1]:.2f} × {ext[2]:.2f}"])
-        d.add(_table([["Item", "Value"]] + [[a, str(b)] for a, b in counts], widths=[50 * mm, 50 * mm]))
+        counts.append([tr("Extent X × Y × Z (m)"), f"{ext[0]:.2f} × {ext[1]:.2f} × {ext[2]:.2f}"])
+        d.add(_table([[tr("Item"), tr("Value")]] + [[a, str(b)] for a, b in counts], widths=[50 * mm, 50 * mm]))
         gen = model.get("generator", {})
         if gen.get("type"):
-            d.p(f"Model source: {_esc(gen['type'])} generator.", "muted")
+            d.p(tr("Model source: {g} generator.", g=_esc(gen["type"])), "muted")
 
-        d.h2("Materials", "INPUT")
+        d.h2(tr("Materials"), "INPUT")
         used_mats = sorted({s.get("material", "") for s in model["sections"].values()})
-        rows = [["Id", "Name", "Kind", "E (MPa)", "fy / fck (MPa)", "Density (kN/m³)"]]
+        rows = [[tr("Id"), tr("Name"), tr("Kind"), "E (MPa)", "fy / fck (MPa)", tr("Density (kN/m³)")]]
         for mid in used_mats:
             m = mats.get(mid, {})
-            rows.append([mid, _esc(m.get("name", "")), m.get("kind", ""), _f(m.get("E"), 0),
+            rows.append([mid, m.get("name", ""), tr(m.get("kind", "")), _f(m.get("E"), 0),
                          _f(m.get("fy", m.get("fck", m.get("fc"))), 1), _f(m.get("gamma", m.get("density")), 1)])
         d.add(_table(rows, widths=[22 * mm, 50 * mm, 20 * mm, 22 * mm, 26 * mm, 28 * mm], align_right_from=3))
 
-        d.h2("Sections", "INPUT")
+        d.h2(tr("Sections"), "INPUT")
         n_use = Counter(e["section"] for e in model["elements"])
-        hp = ParagraphStyle("hp", parent=st["cell"], fontName="Helvetica-Bold", alignment=2)
-        rows = [["Id", "Name", "Shape", "Material", "Members", "A (cm²)"]
+        hp = ParagraphStyle("hp", parent=st["cellb"], alignment=2)
+        rows = [[tr("Id"), tr("Name"), tr("Shape"), tr("Material"), tr("Members"), "A (cm²)"]
                 + [Paragraph(f"{q} (cm<super>4</super>)", hp) for q in ("Iy", "Iz", "J")]]
         for sid, s in model["sections"].items():
             try:
@@ -325,86 +449,87 @@ def build_report(model: dict, include: dict | None = None, steel_code: str | Non
                          str(n_use.get(sid, 0)), _f(A, 1), _f(Iy, 0), _f(Iz, 0), _f(J, 0)])
         d.add(_table(rows, widths=[14 * mm, 52 * mm, 13 * mm, 18 * mm, 14 * mm, 15 * mm, 16 * mm, 16 * mm, 14 * mm], align_right_from=4))
 
-        d.h2("Supports", "INPUT")
+        d.h2(tr("Supports"), "INPUT")
         sup = Counter(_support_kind(s) for s in model.get("supports", []))
-        d.p(", ".join(f"{n} {k}" for k, n in sup.items()) or "No supports.", "small")
+        d.p(_esc(", ".join(f"{n} {k}" for k, n in sup.items()) or tr("No supports.")), "small")
         if model.get("notes"):
-            d.h2("Model notes", "INPUT")
+            d.h2(tr("Model notes"), "INPUT")
             d.bullets(model["notes"])
 
     # ------------------------------------------------------------------ loads
     if inc["loads"]:
-        d.h1("Loads", "INPUT")
-        d.h2("Load cases")
+        d.h1(tr("Loads"), "INPUT")
+        d.h2(tr("Load cases"))
         n_loads = Counter(l.get("case") for l in model.get("loads", []))
         n_area = Counter(a.get("case") for s in model.get("slabs", []) for a in s.get("loads", []) if isinstance(a, dict))
-        rows = [["Id", "Name", "Type", "Self-weight", "Loads defined"]]
+        rows = [[tr("Id"), tr("Name"), tr("Type"), tr("Self-weight"), tr("Loads defined")]]
         for c in model.get("load_cases", []):
             rows.append([c["id"], Paragraph(_esc(c.get("name", "")), st["cell"]), c.get("type", ""),
-                         "yes" if c.get("self_weight") else "", str(n_loads.get(c["id"], 0) + n_area.get(c["id"], 0))])
+                         tr("yes") if c.get("self_weight") else "", str(n_loads.get(c["id"], 0) + n_area.get(c["id"], 0))])
         d.add(_table(rows, widths=[16 * mm, 80 * mm, 22 * mm, 22 * mm, 26 * mm]))
-        d.h2("Load combinations")
-        rows = [["Id", "Name", "Factors", "Used for design"]]
+        d.h2(tr("Load combinations"))
+        rows = [[tr("Id"), tr("Name"), tr("Factors"), tr("Used for design")]]
         ids = {c for c, _ in combos}
         for c in model.get("combinations", []):
             fac = " + ".join(f"{v:g}·{k}" for k, v in c.get("factors", {}).items())
             rows.append([c["id"], Paragraph(_esc(c.get("name", "")), st["cell"]), Paragraph(_esc(fac), st["cell"]),
-                         "ULS" if c["id"] in ids else "no (serviceability)"])
+                         "ULS" if c["id"] in ids else tr("no (serviceability)")])
         d.add(_table(rows, widths=[16 * mm, 55 * mm, 70 * mm, 25 * mm]))
-        d.p("Combinations whose id or name contains sls, serv, service, characteristic or ths are treated as "
-            "serviceability combinations and are not used for member design.", "muted")
+        d.p(tr("Combinations whose id or name contains sls, serv, service, characteristic or ths are treated as "
+               "serviceability combinations and are not used for member design."), "muted")
 
     # ------------------------------------------------------------------ analysis
     if inc["analysis"]:
         d.story.append(PageBreak())
-        d.h1("Linear static analysis", "CALCULATED")
+        d.h1(tr("Linear static analysis"), "CALCULATED")
         d.p(_esc(res.get("solver", {}).get("type", "")), "small")
         d.bullets(res.get("log", []), "note")
-        assumed = ["Linear elastic material, small displacements (first-order analysis) unless P-Delta is listed below.",
-                   "Members are straight Euler-Bernoulli beam elements; member end releases as defined."]
+        assumed = [tr("Linear elastic material, small displacements (first-order analysis) unless P-Delta is listed below."),
+                   tr("Members are straight Euler-Bernoulli beam elements; member end releases as defined.")]
         if res.get("slab_model") != "shell" and model.get("slabs"):
-            assumed.append("Slab area loads are distributed to the supporting beams by tributary areas; slabs are not FE-analysed.")
-        d.h2("Analysis assumptions", "ASSUMED")
+            assumed.append(tr("Slab area loads are distributed to the supporting beams by tributary areas; slabs are not FE-analysed."))
+        d.h2(tr("Analysis assumptions"), "ASSUMED")
         d.bullets(assumed)
         if res.get("warnings"):
-            d.h2("Solver messages")
+            d.h2(tr("Solver messages"))
             d.bullets([w.get("message", "") for w in res["warnings"]])
 
-        d.h2("Equilibrium check (sum of applied loads vs sum of reactions)", "CALCULATED")
-        rows = [["Load case", "Sum Fx applied", "Sum Fy applied", "Sum Fz applied", "Sum Fz reactions", "Force error", "Moment error", "Check"]]
+        d.h2(tr("Equilibrium check (sum of applied loads vs sum of reactions)"), "CALCULATED")
+        rows = [[tr(h) for h in ("Load case", "Sum Fx applied", "Sum Fy applied", "Sum Fz applied", "Sum Fz reactions",
+                                 "Force error", "Moment error", "Check")]]
         for c in model.get("load_cases", []):
             eq = res["cases"].get(c["id"], {}).get("equilibrium")
             if not eq:
                 continue
             a, r = eq["applied"], eq["reactions"]
             rows.append([c["id"], _f(a[0]), _f(a[1]), _f(a[2]), _f(r[2]), f"{eq['force_error']:.1e}", f"{eq['moment_error']:.1e}",
-                         "OK" if eq.get("ok") else "CHECK"])
+                         tr("OK") if eq.get("ok") else tr("CHECK")])
         d.add(_table(rows, widths=[20 * mm, 22 * mm, 22 * mm, 22 * mm, 24 * mm, 20 * mm, 22 * mm, 14 * mm], align_right_from=1))
-        d.p("Errors are relative to the applied load; values near machine precision mean the solution is in equilibrium.", "muted")
+        d.p(tr("Errors are relative to the applied load; values near machine precision mean the solution is in equilibrium."), "muted")
 
-        d.h2("Support reactions per load case (kN, kN·m)", "CALCULATED")
+        d.h2(tr("Support reactions per load case (kN, kN·m)"), "CALCULATED")
         for c in model.get("load_cases", []):
             reac = res["cases"].get(c["id"], {}).get("reactions", {})
             if not reac:
                 continue
-            rows = [["Node", "Fx", "Fy", "Fz", "Mx", "My", "Mz"]]
+            rows = [[tr("Node"), "Fx", "Fy", "Fz", "Mx", "My", "Mz"]]
             tot = np.zeros(6)
             for nid, v in reac.items():
                 rows.append([nid] + [_f(x) for x in v])
                 tot += np.asarray(v, dtype=float)
-            rows.append(["Sum"] + [_f(x) for x in tot[:3]] + ["", "", ""])
+            rows.append([tr("Sum")] + [_f(x) for x in tot[:3]] + ["", "", ""])
             d.add(KeepTogether([Paragraph(f"<b>{_esc(c['id'])}</b> {_esc(c.get('name', ''))}", st["small"]), Spacer(1, 2)]))
             d.add(_table(rows, widths=[22 * mm] + [24 * mm] * 6, align_right_from=1,
-                         styles_extra=[("FONT", (0, -1), (-1, -1), "Helvetica-Bold", 7), ("LINEABOVE", (0, -1), (-1, -1), 0.6, INK)]))
+                         styles_extra=[("FONT", (0, -1), (-1, -1), _FB(), 7.5 if _th() else 7), ("LINEABOVE", (0, -1), (-1, -1), 0.6, INK)]))
             d.gap(4)
         if model.get("combinations"):
-            d.p("Reactions for a combination are the sums of the load-case reactions above multiplied by the combination "
-                "factors (linear analysis).", "muted")
+            d.p(tr("Reactions for a combination are the sums of the load-case reactions above multiplied by the combination "
+                   "factors (linear analysis)."), "muted")
 
-        d.h2("Extreme member internal forces per load (kN, kN·m)", "CALCULATED")
-        d.p("Local axes: N axial (tension positive), Vy / Vz shear, T torsion, My / Mz bending about the local y / z axes. "
-            "Values are taken at the member stations (ends, intermediate points).", "muted")
-        rows = [["Load", "Force", "Max", "Member @ x (m)", "Min", "Member @ x (m)"]]
+        d.h2(tr("Extreme member internal forces per load (kN, kN·m)"), "CALCULATED")
+        d.p(tr("Local axes: N axial (tension positive), Vy / Vz shear, T torsion, My / Mz bending about the local y / z axes. "
+               "Values are taken at the member stations (ends, intermediate points)."), "muted")
+        rows = [[tr(h) for h in ("Load", "Force", "Max", "Member @ x (m)", "Min", "Member @ x (m)")]]
         for lid, _, fac in loads:
             ex = _member_extremes(model, res, fac)
             for k, q in enumerate(QTY):
@@ -416,10 +541,10 @@ def build_report(model: dict, include: dict | None = None, steel_code: str | Non
                      + [("LINEABOVE", (0, r), (-1, r), 0.6, INK) for r in range(1, len(rows), len(QTY))]))
 
     if inc["members"]:
-        d.h2("Member force envelope over all combinations (largest absolute values, kN, kN·m)", "CALCULATED")
+        d.h2(tr("Member force envelope over all combinations (largest absolute values, kN, kN·m)"), "CALCULATED")
         env_loads = [l for l in loads if l[0] in {c["id"] for c in model.get("combinations", [])}] or loads
         env = _member_envelope(model, res, env_loads)
-        rows = [["Member", "Section", "|N|", "|Vy|", "|Vz|", "|T|", "|My|", "|Mz|", "Governing load (|M| max)"]]
+        rows = [[tr("Member"), tr("Section"), "|N|", "|Vy|", "|Vz|", "|T|", "|My|", "|Mz|", tr("Governing load (|M| max)")]]
         secname = {e["id"]: e["section"] for e in model["elements"]}
         for k, (eid, r) in enumerate(env.items()):
             if k >= MAX_MEMBER_ROWS:
@@ -429,28 +554,30 @@ def build_report(model: dict, include: dict | None = None, steel_code: str | Non
         d.add(_table(rows, widths=[16 * mm, 16 * mm, 18 * mm, 17 * mm, 17 * mm, 15 * mm, 18 * mm, 18 * mm, 30 * mm], align_right_from=2,
                      styles_extra=[("ALIGN", (-1, 0), (-1, -1), "LEFT")]))
         if len(env) > MAX_MEMBER_ROWS:
-            d.p(f"Only the first {MAX_MEMBER_ROWS} of {len(env)} members are listed.", "muted")
+            d.p(tr("Only the first {n} of {m} members are listed.", n=MAX_MEMBER_ROWS, m=len(env)), "muted")
 
     # ------------------------------------------------------------------ stability
     if buck:
-        d.h1("Elastic critical buckling", "CALCULATED")
-        d.p(f"Load: <b>{_esc(buck['load'])}</b> {_esc(buck.get('load_name', ''))}.", "small")
-        rows = [["Mode", "Critical load factor alpha_cr"]] + [[str(k + 1), _f(m["factor"], 3)] for k, m in enumerate(buck["modes"])]
+        d.h1(tr("Elastic critical buckling"), "CALCULATED")
+        d.p(tr("Load: <b>{load}</b> {name}.", load=_esc(buck["load"]), name=_esc(buck.get("load_name", ""))), "small")
+        rows = [[tr("Mode"), tr("Critical load factor alpha_cr")]] + [[str(k + 1), _f(m["factor"], 3)] for k, m in enumerate(buck["modes"])]
         d.add(_table(rows, widths=[20 * mm, 45 * mm], align_right_from=1))
         if buck["modes"]:
             a = buck["modes"][0]["factor"]
-            d.p(f"Lowest alpha_cr = {a:.2f}. For reference, EN 1993-1-1 5.2.1(3) allows a first-order analysis when alpha_cr >= 10; "
-                "AISC 360 Appendix 7 / Chapter C use the ratio of second-order to first-order drift instead. The program does "
-                "not decide which analysis your project needs.", "small")
+            d.p(_esc(tr("BUCKLING_REF", "Lowest alpha_cr = {a}. For reference, EN 1993-1-1 5.2.1(3) allows a first-order "
+                        "analysis when alpha_cr >= 10; AISC 360 Appendix 7 / Chapter C use the ratio of second-order to "
+                        "first-order drift instead. The program does not decide which analysis your project needs.",
+                        a=f"{a:.2f}")), "small")
         d.bullets(buck.get("notes", []))
         d.bullets([w.get("message", "") for w in buck.get("warnings", []) if w.get("level") != "info"])
 
     # ------------------------------------------------------------------ steel
     if steel:
         d.story.append(PageBreak())
-        d.h1(f"Steel member design: {steel['code_name']}", "CALCULATED")
+        d.h1(tr("Steel member design: {code}", code=steel["code_name"]), "CALCULATED")
         _design_summary(d, steel)
-        rows = [["Member", "Section", "L (m)", "K y / z", "Lb (m)", "Util.", "Governing check", "Clause", "Combo", "Status"]]
+        rows = [[tr("Member"), tr("Section"), "L (m)", "K y / z", "Lb (m)", tr("Util."), tr("Governing check"), tr("Clause"),
+                 tr("Combo"), tr("Status")]]
         for m in sorted(steel["members"].values(), key=lambda m: -(m.get("util") or -1)):
             if m["status"] == "skipped":
                 continue
@@ -458,7 +585,8 @@ def build_report(model: dict, include: dict | None = None, steel_code: str | Non
             g = m.get("governing") or {}
             rows.append([m["id"], Paragraph(_esc(m.get("section", "")), st["cell"]), _f(p.get("L")),
                          f"{_f(p.get('Ky'))} / {_f(p.get('Kz'))}" if p else "", _f(p.get("Lb")), _f(m.get("util")),
-                         Paragraph(_esc(g.get("name", m.get("reason", ""))), st["cell"]), _esc(g.get("clause", "")),
+                         Paragraph(_esc(_cname(g["name"]) if g.get("name") else m.get("reason", "")), st["cell"]),
+                         Paragraph(_esc(g.get("clause", "")), st["cell"]),
                          g.get("combo", ""), _status(m["status"])])
         d.add(_table(rows, widths=[13 * mm, 34 * mm, 11 * mm, 15 * mm, 11 * mm, 11 * mm, 40 * mm, 18 * mm, 12 * mm, 17 * mm],
                      align_right_from=None, styles_extra=_status_styles(rows)))
@@ -468,41 +596,42 @@ def build_report(model: dict, include: dict | None = None, steel_code: str | Non
     # ------------------------------------------------------------------ RC
     if rc:
         d.story.append(PageBreak())
-        d.h1(f"Reinforced concrete design: {rc['code_name']}", "CALCULATED")
+        d.h1(tr("Reinforced concrete design: {code}", code=rc["code_name"]), "CALCULATED")
         o = rc.get("options", {})
-        d.p(f"Main bars {_esc(o.get('main_grade', ''))}, stirrups / ties {_esc(o.get('tie_grade', ''))}, clear cover "
-            f"{_f((o.get('cover') or 0) * 100, 1)} cm, stirrup {_esc(o.get('stirrup', ''))}. " + _tag("INPUT"), "small")
+        d.p(_esc(tr("RC_OPTIONS", "Main bars {main}, stirrups / ties {tie}, clear cover {cover} cm, stirrup {stirrup}.",
+                    main=o.get("main_grade", ""), tie=o.get("tie_grade", ""), cover=_f((o.get("cover") or 0) * 100, 1),
+                    stirrup=o.get("stirrup", ""))) + " " + _tag("INPUT"), "small")
         _design_summary(d, rc)
         beams = [m for m in rc["members"].values() if m.get("kind") == "beam"]
         cols = [m for m in rc["members"].values() if m.get("kind") == "column"]
         if beams:
-            d.h2("Beams")
-            rows = [["Member", "Section", "Bottom", "Top", "Stirrups", "Side bars", "Util.", "Governing", "Status"]]
+            d.h2(tr("Beams"))
+            rows = [[tr(h) for h in ("Member", "Section", "Bottom", "Top", "Stirrups", "Side bars", "Util.", "Governing", "Status")]]
             for m in beams:
                 rb = m.get("rebar", {})
                 g = m.get("governing") or {}
                 rows.append([m["id"], Paragraph(_esc(m.get("section", "")), st["cell"]), rb.get("bottom", "–"), rb.get("top", "–"),
-                             Paragraph(_esc(rb.get("stirrups", "–")), st["cell"]), Paragraph(_esc(rb.get("side", "")), st["cell"]),
-                             _f(m.get("util")), Paragraph(_esc(g.get("name", m.get("reason", ""))), st["cell"]), _status(m["status"])])
+                             Paragraph(_esc(_rb(rb.get("stirrups", "–"))), st["cell"]), Paragraph(_esc(_rb(rb.get("side", ""))), st["cell"]),
+                             _f(m.get("util")), Paragraph(_esc(_cname(g["name"]) if g.get("name") else m.get("reason", "")), st["cell"]), _status(m["status"])])
             d.add(_table(rows, widths=[13 * mm, 26 * mm, 16 * mm, 16 * mm, 30 * mm, 22 * mm, 11 * mm, 31 * mm, 17 * mm],
                          styles_extra=_status_styles(rows)))
         if cols:
-            d.h2("Columns")
-            rows = [["Member", "Section", "Bars", "rho (%)", "Layout", "Ties", "Util.", "Governing", "Status"]]
+            d.h2(tr("Columns"))
+            rows = [[tr("Member"), tr("Section"), tr("Bars"), "rho (%)", tr("Layout"), tr("Ties"), tr("Util."), tr("Governing"), tr("Status")]]
             for m in cols:
                 rb = m.get("rebar", {})
                 g = m.get("governing") or {}
                 rows.append([m["id"], Paragraph(_esc(m.get("section", "")), st["cell"]), rb.get("bars", "–"), _f(rb.get("rho_percent")),
-                             Paragraph(_esc(rb.get("layout", "")), st["cell"]), Paragraph(_esc(rb.get("ties", "–")), st["cell"]),
-                             _f(m.get("util")), Paragraph(_esc(g.get("name", m.get("reason", ""))), st["cell"]), _status(m["status"])])
+                             Paragraph(_esc(_rb(rb.get("layout", ""))), st["cell"]), Paragraph(_esc(_rb(rb.get("ties", "–"))), st["cell"]),
+                             _f(m.get("util")), Paragraph(_esc(_cname(g["name"]) if g.get("name") else m.get("reason", "")), st["cell"]), _status(m["status"])])
             d.add(_table(rows, widths=[13 * mm, 26 * mm, 16 * mm, 11 * mm, 27 * mm, 24 * mm, 11 * mm, 37 * mm, 17 * mm],
                          styles_extra=_status_styles(rows)))
         _detail_tables(d, rc, st)
         _design_notes(d, rc)
 
     # ------------------------------------------------------------------ closing
-    d.h1("Limitations")
-    d.bullets([
+    d.h1(tr("Limitations"))
+    d.bullets([tr(x) for x in (
         "The analysis is linear elastic. Second-order effects are included only where a P-Delta load is listed.",
         "Member design covers only the checks listed in the tables; members marked NOT COVERED or skipped must be checked by hand.",
         "Connections, base plates, foundations, punching shear, slabs, walls, fatigue, fire, serviceability limits "
@@ -510,10 +639,13 @@ def build_report(model: dict, include: dict | None = None, steel_code: str | Non
         "Default sections, effective lengths and supports chosen by a generator or by the DXF import are assumptions: "
         "replace them with the project values before relying on the results.",
         "This report does not state that the structure is safe or code-compliant.",
-    ])
+    )])
 
     buf = io.BytesIO()
-    title = project.get("title") or model.get("name") or "Structural model"
+    title = project.get("title") or model.get("name") or tr("Structural model")
+    th = _th()
+    head = _t(tr("{title}: calculation report", title=title))
+    foot = tr("Structural Analyze. Results are calculated; see section labels and limitations.")
 
     def page(canvas, doc):
         canvas.saveState()
@@ -521,16 +653,16 @@ def build_report(model: dict, include: dict | None = None, steel_code: str | Non
         canvas.setStrokeColor(ACCENT)
         canvas.setLineWidth(0.8)
         canvas.line(15 * mm, h - 12 * mm, w - 15 * mm, h - 12 * mm)
-        canvas.setFont("Helvetica", 7)
+        canvas.setFont(_FN(), 7.5 if th else 7)
         canvas.setFillColor(MUTED)
-        canvas.drawString(15 * mm, h - 10.5 * mm, f"{title}: calculation report")
+        canvas.drawString(15 * mm, h - 10.5 * mm, head, shaping=th)
         canvas.drawRightString(w - 15 * mm, h - 10.5 * mm, now.strftime("%Y-%m-%d %H:%M"))
-        canvas.drawString(15 * mm, 9 * mm, "Structural Analyze. Results are calculated; see section labels and limitations.")
-        canvas.drawRightString(w - 15 * mm, 9 * mm, f"Page {doc.page}")
+        canvas.drawString(15 * mm, 9 * mm, foot, shaping=th)
+        canvas.drawRightString(w - 15 * mm, 9 * mm, tr("Page {n}", n=doc.page), shaping=th)
         canvas.restoreState()
 
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm, topMargin=17 * mm, bottomMargin=15 * mm,
-                            title=f"{title}: calculation report", author=project.get("engineer") or "Structural Analyze",
+                            title=tr("{title}: calculation report", title=title), author=project.get("engineer") or "Structural Analyze",
                             subject="Structural calculation report", creator="Structural Analyze")
     doc.build(d.story, onFirstPage=page, onLaterPages=page)
     return buf.getvalue()
@@ -555,35 +687,35 @@ def _support_kind(s):
     from .solver import SUPPORT_TYPES
     dofs = list(map(int, s.get("dofs") or SUPPORT_TYPES.get(s.get("type", "fixed"), [1] * 6)))
     if s.get("type") and not s.get("dofs"):
-        return s["type"]
+        return tr(s["type"])
     if dofs == [1] * 6:
-        return "fixed"
+        return tr("fixed")
     if dofs == [1, 1, 1, 0, 0, 0]:
-        return "pinned"
-    return "restrained " + " ".join(k for k, v in zip(("ux", "uy", "uz", "rx", "ry", "rz"), dofs) if v)
+        return tr("pinned")
+    return tr("restrained") + " " + " ".join(k for k, v in zip(("ux", "uy", "uz", "rx", "ry", "rz"), dofs) if v)
 
 
 def _status(s):
-    return STATUS.get(s, (s, MUTED))[0]
+    return tr(STATUS.get(s, (s, MUTED))[0])
 
 
 def _status_styles(rows):
     out = []
     for r, row in enumerate(rows[1:], start=1):
         for label, c in STATUS.values():
-            if row[-1] == label:
+            if row[-1] == tr(label):
                 out.append(("TEXTCOLOR", (-1, r), (-1, r), c))
-                out.append(("FONT", (-1, r), (-1, r), "Helvetica-Bold", 7))
+                out.append(("FONT", (-1, r), (-1, r), _FB(), 7.5 if _th() else 7))
     return out
 
 
 def _design_summary(d, r):
     s = r["summary"]
-    rows = [["Checked", "OK", "Over 1.0", "Not covered", "Skipped", "Max utilisation"],
+    rows = [[tr(h) for h in ("Checked", "OK", "Over 1.0", "Not covered", "Skipped", "Max utilisation")],
             [str(s.get("n_checked", s["ok"] + s["fail"])), str(s["ok"]), str(s["fail"]), str(s["not_covered"]),
              str(s.get("skipped", 0)), _f(s.get("max_util"))]]
     d.add(_table(rows, widths=[26 * mm] * 6, align_right_from=0))
-    d.p(f"Combinations used: {_esc(', '.join(r.get('combinations', [])))}.", "muted")
+    d.p(tr("Combinations used: {c}.", c=_esc(", ".join(r.get("combinations", [])))), "muted")
 
 
 def _detail_tables(d, r, st, n=6):
@@ -596,17 +728,18 @@ def _detail_tables(d, r, st, n=6):
             pick.append(m)
     if not pick:
         return
-    d.h2("Check details: most utilised members" + (" and members over 1.0" if any(m["status"] == "fail" for m in pick) else ""))
+    d.h2(tr("Check details: most utilised members and members over 1.0" if any(m["status"] == "fail" for m in pick)
+            else "Check details: most utilised members"))
     for m in pick:
-        rows = [["Check", "Clause", "Combo", "x (m)", "Demand", "Capacity", "Unit", "Ratio"]]
+        rows = [[tr("Check ").strip(), tr("Clause"), tr("Combo"), "x (m)", tr("Demand"), tr("Capacity"), tr("Unit"), tr("Ratio")]]
         for c in sorted(m.get("checks", []), key=lambda c: -(c.get("ratio") or 0)):
             unit = UNIT.get(c.get("unit"), c.get("unit", ""))
             dg = 3 if c.get("unit") == "ratio" else 2
-            rows.append([Paragraph(_esc(c["name"]), st["cell"]), _esc(c.get("clause", "")), c.get("combo", ""), _f(c.get("x")),
+            rows.append([Paragraph(_esc(_cname(c["name"])), st["cell"]), Paragraph(_esc(c.get("clause", "")), st["cell"]), c.get("combo", ""), _f(c.get("x")),
                          _f(abs(c["demand"]) if c.get("unit") != "ratio" else c["demand"], dg), _f(c["capacity"], dg), unit,
                          _f(c.get("ratio"), 3)])
-        head = Paragraph(f"<b>{_esc(m['id'])}</b> {_esc(m.get('section', ''))}: utilisation <b>{_f(m['util'], 3)}</b> "
-                         f"({_status(m['status'])})", st["small"])
+        head = Paragraph(tr("MEMBER_HEAD", "<b>{id}</b> {sec}: utilisation <b>{u}</b> ({status})", id=_esc(m["id"]),
+                            sec=_esc(m.get("section", "")), u=_f(m["util"], 3), status=_status(m["status"])), st["small"])
         tab = _table(rows, widths=[52 * mm, 26 * mm, 14 * mm, 12 * mm, 20 * mm, 20 * mm, 12 * mm, 14 * mm], align_right_from=3,
                      styles_extra=[("ALIGN", (6, 0), (6, -1), "LEFT")]
                      + [("TEXTCOLOR", (-1, k), (-1, k), STATUS["fail"][1]) for k, row in enumerate(rows[1:], 1)
@@ -627,13 +760,14 @@ def _num(s):
 def _design_notes(d, r):
     nc = [m for m in r["members"].values() if m["status"] == "not_covered"]
     if nc:
-        d.h2(f"Not covered ({len(nc)}): outside the implemented clauses, check by hand")
+        d.h2(tr("Not covered ({n}): outside the implemented clauses, check by hand", n=len(nc)))
         d.bullets([f"{m['id']}: {m.get('reason', '')}" for m in nc[:40]])
         if len(nc) > 40:
-            d.p(f"… and {len(nc) - 40} more.", "muted")
+            d.p(tr("… and {n} more.", n=len(nc) - 40), "muted")
     member_notes = Counter(n for m in r["members"].values() for n in m.get("notes", []) or [])
-    d.h2("Design notes and assumptions", "ASSUMED")
-    d.bullets(list(r.get("notes", [])) + [f"{n} ({k} member{'s' if k != 1 else ''})" for n, k in member_notes.most_common(12)])
+    d.h2(tr("Design notes and assumptions"), "ASSUMED")
+    d.bullets(list(r.get("notes", [])) + [f"{n} " + tr("({k} members)" if k != 1 else "({k} member)", k=k)
+                                          for n, k in member_notes.most_common(12)])
 
 
-__all__ = ["build_report", "ReportError", "INCLUDE_DEFAULTS"]
+__all__ = ["build_report", "ReportError", "INCLUDE_DEFAULTS", "LANGS"]

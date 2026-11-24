@@ -31,6 +31,7 @@ export interface ReportRequest {
   stability_load?: string;
   image?: string;
   project?: { title?: string; project?: string; engineer?: string };
+  lang?: "en" | "th";
 }
 
 export const api = {
