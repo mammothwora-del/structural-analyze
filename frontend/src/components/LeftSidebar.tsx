@@ -139,13 +139,24 @@ function TrussGen() {
 
 function WarehouseGen() {
   const { generate, busy } = useStore();
-  const { p, setP, num, u } = useSI({ roof: "pitched", span: 20, n_spans: 1, bay: 6, n_bays: 5, eave_height: 6, rise: 2, eave_depth: 1, panels: 8, support: "fixed", sdl: 0.3, live_load: 0.5,
+  const { p, setP, num, u } = useSI({ roof: "pitched", spans: [20] as number[], roof_layout: "repeat", bay: 6, n_bays: 5, eave_height: 6, rise: 2, eave_depth: 1, panels: 8, support: "fixed", sdl: 0.3, live_load: 0.5,
     wind_pressure: 0.8, standard: "EN1990", roof_bracing: true, wall_bracing: true });
+  const [spanText, setSpanText] = useState<Record<string, string>>({});
   const L = u.u("length"), A = u.u("areaLoad");
   const portal = p.roof === "portal";
-  const params = { type: "warehouse", ...p, n_bays: Math.round(p.n_bays), n_spans: Math.max(1, Math.round(p.n_spans)), panels: Math.round(p.panels), eave_depth: portal ? 0 : p.eave_depth };
+  const multi = p.spans.length > 1;
+  const canContinue = p.roof !== "fink" && p.roof !== "fan";
+  const layout = multi && canContinue ? p.roof_layout : "repeat";
+  const params = { type: "warehouse", ...p, roof_layout: layout, span: p.spans[0], n_spans: p.spans.length, n_bays: Math.round(p.n_bays), panels: Math.round(p.panels), eave_depth: portal ? 0 : p.eave_depth };
   const roofs = [...WAREHOUSE_ROOFS.map(([key, label, hint]) => ({ key, label, hint,
     params: { type: "warehouse", roof: key, span: 16, n_bays: 1, eave_height: 5, rise: 2.5, eave_depth: key === "portal" ? 0 : 0.8, panels: 6, roof_bracing: false, wall_bracing: false, wind_pressure: 0 } }))];
+  const spanValue = spanText[u.sys] ?? p.spans.map((v) => +u.c("length", v).toFixed(3)).join(", ");
+  const setSpans = (txt: string) => {
+    setSpanText({ [u.sys]: txt });
+    const v = list(txt).map((x) => u.si("length", x));
+    if (v.length) setP({ ...p, spans: v });
+  };
+  const width = p.spans.reduce((a, b) => a + b, 0);
   return (
     <div>
       <div className="text-[11px] text-ink-400 mb-1">Roof structure</div>
@@ -153,14 +164,33 @@ function WarehouseGen() {
       <GenPreview params={params} />
       <F label="Standard (combinations, steel)"><select className="input" value={p.standard} onChange={(e) => setP({ ...p, standard: e.target.value })}>{STD_OPTIONS}</select></F>
       <div className="grid grid-cols-2 gap-x-2">
-        <F label={`Span (${L})`}>{num("span", "length")}</F>
-        <F label="Number of spans">{num("n_spans", null, 1)}</F>
+        <div className="col-span-2">
+          <F label={`Span lengths (${L})`} hint={multi ? `${p.spans.length} spans, ${+u.c("length", width).toFixed(2)} ${L}` : "e.g. 20, 15"}>
+            <input className="input" value={spanValue} onChange={(e) => setSpans(e.target.value)} />
+          </F>
+        </div>
+        {multi && (
+          <div className="col-span-2 mb-2">
+            <div className="text-[11px] text-ink-400 mb-0.5">Roof over the spans</div>
+            <div className="flex rounded border border-ink-700 overflow-hidden text-[11px]">
+              {([["repeat", portal ? "Frame per span" : "Truss per span"], ["continuous", portal ? "One rafter, middle columns" : "One truss, middle columns"]] as const).map(([k, l]) => (
+                <button key={k} type="button" disabled={k === "continuous" && !canContinue} onClick={() => setP({ ...p, roof_layout: k })}
+                  className={`flex-1 py-1 ${layout === k ? "bg-accent text-ink-950 font-semibold" : "text-ink-300 hover:bg-ink-800"} disabled:opacity-40 disabled:hover:bg-transparent`}>{l}</button>
+              ))}
+            </div>
+            <div className="text-[10px] text-ink-500 mt-0.5">
+              {!canContinue ? "Fink and fan trusses have a fixed panel layout: one truss per span only."
+                : layout === "continuous" ? `One ${portal ? "rafter" : "truss"} over the full width, carried by a column on every inner grid line. Panel points are placed on the column lines; the rise is over the full width.`
+                : `A separate ${portal ? "frame" : "truss"} on each span${p.roof === "mono" ? " (saw-tooth)" : ""}, sharing the inner columns.`}
+            </div>
+          </div>
+        )}
         <F label={`Bay spacing (${L})`}>{num("bay", "length")}</F>
         <F label="Number of bays">{num("n_bays", null, 1)}</F>
         <F label={`Eave height (${L})`}>{num("eave_height", "length")}</F>
         <F label={`Roof rise (${L})`}>{num("rise", "length")}</F>
         {!portal && <F label={`Truss depth at eave (${L})`}>{num("eave_depth", "length")}</F>}
-        {p.roof !== "fink" && p.roof !== "fan" && <F label={portal ? "Purlin spaces per span" : "Truss panels"}>{num("panels", null, 1)}</F>}
+        {p.roof !== "fink" && p.roof !== "fan" && <F label={portal ? "Purlin spaces per span" : "Truss panels per span"}>{num("panels", null, 1)}</F>}
         <F label="Column bases"><select className="input" value={p.support} onChange={(e) => setP({ ...p, support: e.target.value })}><option value="fixed">fixed</option><option value="pinned">pinned</option></select></F>
         <F label={`Roof SDL (${A})`}>{num("sdl", "areaLoad")}</F>
         <F label={`Roof live (${A})`}>{num("live_load", "areaLoad")}</F>
@@ -168,7 +198,7 @@ function WarehouseGen() {
       </div>
       <label className="flex items-center gap-2 text-[11px] mb-1"><input type="checkbox" className="accent-sky-400" checked={p.roof_bracing} onChange={(e) => setP({ ...p, roof_bracing: e.target.checked })} />Roof bracing in end bays</label>
       <label className="flex items-center gap-2 text-[11px] mb-2"><input type="checkbox" className="accent-sky-400" checked={p.wall_bracing} onChange={(e) => setP({ ...p, wall_bracing: e.target.checked })} />Wall bracing in end bays</label>
-      <GenNote>{portal ? "Portal frames: I-section rafters rigidly connected to the columns (no haunches modelled)" : "Roof trusses on steel columns, bottom-chord ties with vertical bracing in the end bays"}, simply supported purlins and eave struts. Roof sheeting spans one way to the purlins (assumed). Several spans share the internal columns. Untick a bracing option to see the stability check report the mechanism. Steel: {STEEL_FOR[p.standard]}.</GenNote>
+      <GenNote>{portal ? "Portal frames: I-section rafters rigidly connected to the columns (no haunches modelled)" : "Roof trusses on steel columns, bottom-chord ties with vertical bracing in the end bays"}, simply supported purlins and eave struts. Roof sheeting spans one way to the purlins (assumed). Several spans share the internal columns, or carry one continuous roof on middle columns. Untick a bracing option to see the stability check report the mechanism. Steel: {STEEL_FOR[p.standard]}.</GenNote>
       <button className="btn-primary w-full" disabled={busy} onClick={() => generate(params)}>Generate warehouse</button>
     </div>
   );

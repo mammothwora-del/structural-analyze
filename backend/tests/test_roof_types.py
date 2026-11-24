@@ -144,3 +144,64 @@ def test_unknown_types_are_rejected():
         generate({"type": "warehouse", "roof": "banana"})
     with pytest.raises(ValueError):
         generate({"type": "lattice_roof", "shape": "banana"})
+
+
+@pytest.mark.parametrize("roof", ["pitched", "howe_roof", "scissors", "bowstring", "mono", "portal"])
+def test_roof_continuous_over_a_middle_column_with_unequal_spans(roof):
+    m = generate({"type": "warehouse", "roof": roof, "spans": [12.0, 8.0], "roof_layout": "continuous", "bay": 6.0,
+                  "n_bays": 3, "live_load": 0.5})
+    res = analyze(m)
+    _check(res)
+    assert sum(v[2] for v in res["cases"]["LL"]["reactions"].values()) == pytest.approx(0.5 * 20 * 18, rel=1e-5)
+    assert [g["pos"] for g in m["grid"]["x"]] == [0.0, 12.0, 20.0]
+    assert len(m["supports"]) == 3 * 4
+    pairs = [frozenset((e["i"], e["j"])) for e in m["elements"]]
+    assert len(pairs) == len(set(pairs))
+    nodes = {n["id"]: n for n in m["nodes"]}
+    mid = [e for e in m["elements"] if e["type"] == "column" and abs(nodes[e["i"]]["x"] - 12) < 1e-9]
+    assert len(mid) == 4   # one column per frame, from the base to the underside of the roof member
+    roof_z = min(nodes[e["i"]]["z"] for e in m["elements"] if e["type"] != "column" and abs(nodes[e["i"]]["x"] - 12) < 1e-9
+                 and nodes[e["i"]]["z"] > 1)
+    assert all(nodes[e["j"]]["z"] == pytest.approx(roof_z) for e in mid)
+    assert any("continuous over 2 spans (12 + 8 m)" in n for n in m["notes"])
+
+
+def test_continuous_roof_sends_more_load_to_the_middle_column():
+    """Two equal spans continuous over the middle column: the middle line takes more than either end line
+    (5/8 of the total for a uniform continuous beam on rigid supports), against 1/2 with one truss per span."""
+    def share(layout):
+        m = generate({"type": "warehouse", "roof": "mono", "n_spans": 2, "roof_layout": layout, "n_bays": 3,
+                      "live_load": 0.5, "sdl": 0, "wind_pressure": 0})
+        nodes = {n["id"]: n for n in m["nodes"]}
+        r = analyze(m)["cases"]["LL"]["reactions"]
+        return sum(v[2] for k, v in r.items() if nodes[k]["x"] == 20.0) / sum(v[2] for v in r.values())
+    repeat, continuous = share("repeat"), share("continuous")
+    assert repeat == pytest.approx(0.5, abs=0.04)   # purlin tributary widths at the sawtooth step make it not exactly 1/2
+    assert continuous > repeat + 0.04 and continuous < 0.66
+
+
+def test_truss_geometry_breaks_land_on_bottom_chord_nodes():
+    P, M, roof, (left, right) = truss_geometry("mono", 20.0, 2.0, 16, 1.0, breaks=[12.0])
+    xs = sorted(x for k, (x, z) in P.items() if k.startswith("B"))
+    assert 12.0 in xs and xs[0] == 0 and xs[-1] == 20
+    assert max(b - a for a, b in zip(xs, xs[1:])) <= 20 / 16 * 1.5
+    assert P[roof[-1]][1] == pytest.approx(3.0)   # mono top chord still rises the full rise over the whole width
+    # symmetric roofs also get a ridge node, even when it is not on a span boundary
+    P, *_ = truss_geometry("pitched", 20.0, 2.0, 8, 0.5, breaks=[12.0])
+    assert max(z for _, z in P.values()) == pytest.approx(2.5)
+    with pytest.raises(ValueError):
+        truss_geometry("fink", 20.0, 2.0, 8, breaks=[12.0])
+
+
+def test_span_list_input():
+    m = generate({"type": "warehouse", "roof": "pitched", "spans": "15, 10, 15", "n_bays": 2})
+    assert [g["pos"] for g in m["grid"]["x"]] == [0.0, 15.0, 25.0, 40.0]
+    assert m["generator"]["spans"] == [15.0, 10.0, 15.0] and m["generator"]["n_spans"] == 3
+    assert m["name"].startswith("Warehouse 40 ×")
+    _check(analyze(m))
+    with pytest.raises(ValueError, match="greater than zero"):
+        generate({"type": "warehouse", "spans": [12, 0]})
+    with pytest.raises(ValueError, match="fink"):
+        generate({"type": "warehouse", "roof": "fink", "spans": [12, 8], "roof_layout": "continuous"})
+    with pytest.raises(ValueError, match="layout"):
+        generate({"type": "warehouse", "roof_layout": "banana"})

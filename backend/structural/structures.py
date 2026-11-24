@@ -95,32 +95,52 @@ TRUSS_TYPES = ("pratt", "howe", "warren", "warren_v", "k", "pitched", "howe_roof
 FLAT_TYPES = ("pratt", "howe", "warren", "warren_v", "k")
 
 
-def _posts_and_diagonals(n, a, top_z, bot_z, pattern):
+def _posts_and_diagonals(xs, top_z, bot_z, pattern):
     """Truss with a post at every panel point between a top and a bottom chord profile.
 
-    top_z(k), bot_z(k): chord heights at panel point k (0..n). Where both coincide (e.g. at the supports
-    of a truss without end depth) the top and bottom nodes merge. pattern 'pratt': diagonals slope down
-    towards midspan (tension under gravity); 'howe': up towards midspan.
+    xs: x of the panel points 0..n. top_z(k), bot_z(k): chord heights at panel point k. Where both
+    coincide (e.g. at the supports of a truss without end depth) the top and bottom nodes merge.
+    pattern 'pratt': diagonals slope down towards midspan (tension under gravity); 'howe': up towards midspan.
     """
+    n = len(xs) - 1
     P, M = {}, []
     for k in range(n + 1):
-        P[f"B{k}"] = (k * a, bot_z(k))
+        P[f"B{k}"] = (xs[k], bot_z(k))
         if top_z(k) - bot_z(k) > 1e-9:
-            P[f"T{k}"] = (k * a, top_z(k))
+            P[f"T{k}"] = (xs[k], top_z(k))
     top = [f"T{k}" if f"T{k}" in P else f"B{k}" for k in range(n + 1)]
     M += [(f"B{k}", f"B{k + 1}", "chord") for k in range(n)]
     M += [(top[k], top[k + 1], "chord") for k in range(n)]
     M += [(f"B{k}", top[k], "web") for k in range(n + 1) if top[k] != f"B{k}"]
-    h = n / 2
+    mid = (xs[0] + xs[-1]) / 2
     for k in range(n):
-        left = k + 0.5 < h
+        left = (xs[k] + xs[k + 1]) / 2 < mid
         down_to_centre = (top[k], f"B{k + 1}") if left else (f"B{k}", top[k + 1])
         up_to_centre = (f"B{k}", top[k + 1]) if left else (top[k], f"B{k + 1}")
         M.append((*(down_to_centre if pattern == "pratt" else up_to_centre), "web"))
     return P, M, top
 
 
-def truss_geometry(kind: str, span: float, height: float, panels: int, eave_depth: float = 0.0, bottom_rise: float = 0.0):
+BREAK_TRUSSES = ("pitched", "howe_roof", "scissors", "mono", "bowstring")
+
+
+def _panel_points(span, panels, breaks, symmetric):
+    """x of the panel points when some x (interior column lines) must be panel points.
+
+    Each stretch between two required points gets a whole number of equal panels, as close as possible to
+    span / panels. A symmetric roof also needs a panel point at the ridge (midspan).
+    """
+    req = sorted({0.0, float(span), *(float(b) for b in breaks if 1e-6 < b < span - 1e-6), *([span / 2] if symmetric else [])})
+    a0 = span / max(2, int(panels))
+    xs = [0.0]
+    for lo, hi in zip(req, req[1:]):
+        m = max(1, round((hi - lo) / a0))
+        xs += [lo + (hi - lo) * i / m for i in range(1, m)] + [hi]
+    return xs
+
+
+def truss_geometry(kind: str, span: float, height: float, panels: int, eave_depth: float = 0.0, bottom_rise: float = 0.0,
+                   breaks: list[float] | None = None):
     """Nodes (x, z) and members of a planar truss in the x-z plane.
 
     Returns (points: dict name->(x, z), members: list of (a, b, role), roof: list of node names
@@ -131,6 +151,9 @@ def truss_geometry(kind: str, span: float, height: float, panels: int, eave_dept
     'pitched' (Pratt web), 'howe_roof', 'fink' (W web, 4 top-chord panels), 'fan', 'scissors'
     (bottom chord pitched up to bottom_rise, default rise/2), 'mono' (mono-pitch, high end on the right),
     'bowstring' (parabolic top chord).
+
+    breaks: x positions that must be bottom-chord panel points (interior column lines of a roof that is
+    continuous over several spans). Only for the trusses in BREAK_TRUSSES; panels are then near-uniform.
     """
     if kind not in TRUSS_TYPES:
         raise ValueError(f"Unknown truss type '{kind}'. Available: {', '.join(TRUSS_TYPES)}")
@@ -140,9 +163,17 @@ def truss_geometry(kind: str, span: float, height: float, panels: int, eave_dept
     if kind == "k" and n < 4:
         n = 4
     a = span / n
+    if breaks:
+        if kind not in BREAK_TRUSSES:
+            raise ValueError(f"Interior supports are available for {', '.join(BREAK_TRUSSES)} trusses, not '{kind}'")
+        xs = _panel_points(span, panels, breaks, symmetric=kind != "mono")
+        n = len(xs) - 1
+        t = [x / span for x in xs]
+    else:
+        xs, t = [k * a for k in range(n + 1)], [k / n for k in range(n + 1)]
     P, M = {}, []
     for k in range(n + 1):
-        P[f"B{k}"] = (k * a, 0.0)
+        P[f"B{k}"] = (xs[k], 0.0)
     if kind in ("pratt", "howe"):
         for k in range(1, n):
             P[f"T{k}"] = (k * a, height)
@@ -193,11 +224,11 @@ def truss_geometry(kind: str, span: float, height: float, panels: int, eave_dept
             M += [(f"M{k}", f"T{nxt}", "web"), (f"M{k}", f"B{nxt}", "web")]
         roof = ["B0"] + [f"T{k}" for k in range(1, n)] + [f"B{n}"]
     elif kind == "pitched":
-        h = n // 2
+        h = min(range(n + 1), key=lambda k: abs(t[k] - 0.5))
         for k in range(n + 1):
-            z = eave_depth + height * (1 - abs(2 * k / n - 1))
+            z = eave_depth + height * (1 - abs(2 * t[k] - 1))
             if z > 1e-9:
-                P[f"T{k}"] = (k * a, z)
+                P[f"T{k}"] = (xs[k], z)
         top = [f"T{k}" if f"T{k}" in P else f"B{k}" for k in range(n + 1)]
         M += [(f"B{k}", f"B{k + 1}", "chord") for k in range(n)]
         M += [(top[k], top[k + 1], "chord") for k in range(n)]
@@ -211,16 +242,16 @@ def truss_geometry(kind: str, span: float, height: float, panels: int, eave_dept
         roof = top
     elif kind in ("howe_roof", "scissors", "mono", "bowstring"):
         if kind == "howe_roof":
-            tz, bz, pat = (lambda k: eave_depth + height * (1 - abs(2 * k / n - 1))), (lambda k: 0.0), "howe"
+            tz, bz, pat = (lambda k: eave_depth + height * (1 - abs(2 * t[k] - 1))), (lambda k: 0.0), "howe"
         elif kind == "scissors":
             br = bottom_rise if bottom_rise > 0 else height / 2
             br = min(br, 0.8 * (eave_depth + height))
-            tz, bz, pat = (lambda k: eave_depth + height * (1 - abs(2 * k / n - 1))), (lambda k: br * (1 - abs(2 * k / n - 1))), "pratt"
+            tz, bz, pat = (lambda k: eave_depth + height * (1 - abs(2 * t[k] - 1))), (lambda k: br * (1 - abs(2 * t[k] - 1))), "pratt"
         elif kind == "mono":
-            tz, bz, pat = (lambda k: eave_depth + height * k / n), (lambda k: 0.0), "pratt"
+            tz, bz, pat = (lambda k: eave_depth + height * t[k]), (lambda k: 0.0), "pratt"
         else:
-            tz, bz, pat = (lambda k: eave_depth + height * (1 - (2 * k / n - 1) ** 2)), (lambda k: 0.0), "pratt"
-        P, M, roof = _posts_and_diagonals(n, a, tz, bz, pat)
+            tz, bz, pat = (lambda k: eave_depth + height * (1 - (2 * t[k] - 1) ** 2)), (lambda k: 0.0), "pratt"
+        P, M, roof = _posts_and_diagonals(xs, tz, bz, pat)
     elif kind in ("fink", "fan"):
         # classic gable trusses with 4 top-chord panels (panels input is not used)
         H = eave_depth + height
@@ -307,8 +338,9 @@ def generate_truss2d(params: dict | None = None) -> dict:
 
 # ------------------------------------------------------------------ warehouse
 WAREHOUSE_ROOFS = ("pitched", "howe_roof", "fink", "fan", "scissors", "bowstring", "mono", "portal")
+WAREHOUSE_LAYOUTS = ("repeat", "continuous")   # one roof per span, or one roof over all spans on interior columns
 WAREHOUSE_DEFAULTS = {
-    "type": "warehouse", "roof": "pitched", "span": 20.0, "n_spans": 1, "bay": 6.0, "n_bays": 5, "eave_height": 6.0,
+    "type": "warehouse", "roof": "pitched", "span": 20.0, "n_spans": 1, "spans": None, "roof_layout": "repeat", "bay": 6.0, "n_bays": 5, "eave_height": 6.0,
     "rise": 2.0, "eave_depth": 1.0, "panels": 8, "support": "fixed", "sdl": 0.3, "live_load": 0.5, "wind_pressure": 0.8,
     "standard": "EN1990", "roof_bracing": True, "wall_bracing": True,
     "column": {"shape": "I", "h": 0.4, "bf": 0.2, "tf": 0.013, "tw": 0.008},
@@ -319,17 +351,35 @@ WAREHOUSE_DEFAULTS = {
 }
 
 
-def _portal_geometry(span, rise, panels, mono=False):
-    """Rafter line of a portal frame: points (x, z) at purlin positions, eaves at z = 0."""
-    n = max(2, int(panels))
-    if not mono and n % 2:
-        n += 1
+def _portal_geometry(span, rise, panels, mono=False, breaks=None):
+    """Rafter line of a portal frame: points (x, z) at purlin positions, eaves at z = 0.
+
+    breaks: x positions that must be rafter points (interior column lines)."""
+    if breaks:
+        xs = _panel_points(span, panels, breaks, symmetric=not mono)
+    else:
+        n = max(2, int(panels))
+        if not mono and n % 2:
+            n += 1
+        xs = [k * span / n for k in range(n + 1)]
+    n = len(xs) - 1
     P = {}
-    for k in range(n + 1):
-        x = k * span / n
-        P[f"R{k}"] = (x, rise * k / n if mono else rise * (1 - abs(2 * k / n - 1)))
+    for k, x in enumerate(xs):
+        t = x / span
+        P[f"R{k}"] = (x, rise * t if mono else rise * (1 - abs(2 * t - 1)))
     M = [(f"R{k}", f"R{k + 1}", "rafter") for k in range(n)]
     return P, M, [f"R{k}" for k in range(n + 1)], ("R0", f"R{n}")
+
+
+def _warehouse_spans(p):
+    """Span lengths across the building: the 'spans' list if given, else n_spans equal spans of 'span'."""
+    raw = p.get("spans")
+    if raw:
+        spans = [float(v) for v in (raw if isinstance(raw, (list, tuple)) else str(raw).replace(",", " ").split())]
+        if not spans or min(spans) <= 0:
+            raise ValueError("Every span length must be greater than zero")
+        return spans
+    return [float(p["span"])] * max(1, int(p.get("n_spans", 1)))
 
 
 def generate_warehouse(params: dict | None = None) -> dict:
@@ -338,31 +388,50 @@ def generate_warehouse(params: dict | None = None) -> dict:
     roof_kind = p.get("roof", "pitched")
     if roof_kind not in WAREHOUSE_ROOFS:
         raise ValueError(f"Unknown warehouse roof '{roof_kind}'. Available: {', '.join(WAREHOUSE_ROOFS)}")
-    span, bay, nb, H = float(p["span"]), float(p["bay"]), int(p["n_bays"]), float(p["eave_height"])
-    ns = max(1, int(p.get("n_spans", 1)))
+    layout = p.get("roof_layout", "repeat")
+    if layout not in WAREHOUSE_LAYOUTS:
+        raise ValueError(f"Unknown roof layout '{layout}'. Available: {', '.join(WAREHOUSE_LAYOUTS)}")
+    spans = _warehouse_spans(p)
+    ns = len(spans)
+    bay, nb, H = float(p["bay"]), int(p["n_bays"]), float(p["eave_height"])
+    xs_col = [0.0]
+    for L in spans:
+        xs_col.append(xs_col[-1] + L)
+    width = xs_col[-1]
+    continuous = layout == "continuous" and ns > 1
+    if continuous and roof_kind in ("fink", "fan"):
+        raise ValueError(f"A roof continuous over interior columns is not available for {roof_kind} trusses (fixed panel "
+                         "layout). Use the 'repeat' layout or another roof type.")
+    p["spans"], p["n_spans"], p["roof_layout"] = spans, ns, layout
     portal = roof_kind in ("portal",)
-    if portal:
-        P, M, roof, (left, right) = _portal_geometry(span, float(p["rise"]), int(p["panels"]))
+    rise, panels = float(p["rise"]), int(p["panels"])
+
+    def geometry(L, breaks=None, n_panels=panels):
+        if portal:
+            return _portal_geometry(L, rise, n_panels, breaks=breaks)
+        return truss_geometry(roof_kind, L, rise, n_panels, float(p["eave_depth"]), breaks=breaks)
+
+    # roof units: one roof over the whole width carried by interior columns, or one roof per span
+    if continuous:
+        units = [(0.0, *geometry(width, xs_col[1:-1], panels * ns))]
     else:
-        P, M, roof, (left, right) = truss_geometry(roof_kind, span, float(p["rise"]), int(p["panels"]), float(p["eave_depth"]))
+        units = [(x0, *geometry(L)) for x0, L in zip(xs_col, spans)]
     st = p["steel"]
     keys = ("column", "rafter", "purlin", "brace") if portal else ("column", "chord", "web", "purlin", "brace")
     sections = {k.upper()[:3]: {**p[k], "material": st, "name": _name(p[k], st)} for k in keys}
     S = {"column": "COL", "chord": "CHO", "web": "WEB", "purlin": "PUR", "brace": "BRA", "rafter": "RAF"}
     b = _Builder()
     ys = [j * bay for j in range(nb + 1)]
-    xs_col = [s_ * span for s_ in range(ns + 1)]
-    lx, rx = P[left][0], P[right][0]
-    # nodes at the column lines (x of the truss supports) carry the column; everything above is chained
-    frames, span_nodes = [], []   # frames[j][(s, name)] -> node id
+    interior = set(range(1, ns)) if continuous else set()
+    frames = []   # frames[j][(unit, name)] -> node id
     for j, y in enumerate(ys):
         ids = {}
         col_heads = {x: set() for x in xs_col}
-        for s_ in range(ns):
-            x0 = s_ * span
+        for u, (x0, P, M, roof, (left, right)) in enumerate(units):
+            lx, rx = P[left][0], P[right][0]
             for k, (x, z) in P.items():
                 nid = b.node(x0 + x, y, H + z, 1, f"F{j + 1}")
-                ids[(s_, k)] = nid
+                ids[(u, k)] = nid
                 for xc in xs_col:
                     if abs(x0 + x - xc) < 1e-6:
                         col_heads[xc].add((H + z, nid))
@@ -372,28 +441,31 @@ def generate_warehouse(params: dict | None = None) -> dict:
                 if at_col:
                     continue   # end posts are part of the column
                 if portal:
-                    b.el("R", ids[(s_, a_)], ids[(s_, b_)], S["rafter"], "beam", "rafter", 1, f"Rafter F{j + 1} span {s_ + 1}")
+                    b.el("R", ids[(u, a_)], ids[(u, b_)], S["rafter"], "beam", "rafter", 1, f"Rafter F{j + 1} span {u + 1}")
                 else:
-                    b.el("T", ids[(s_, a_)], ids[(s_, b_)], S["chord"] if role == "chord" else S["web"], "truss", role, 1,
-                         f"Truss F{j + 1}.{s_ + 1} {role} {a_}-{b_}", truss=True)
+                    b.el("T", ids[(u, a_)], ids[(u, b_)], S["chord"] if role == "chord" else S["web"], "truss", role, 1,
+                         f"Truss F{j + 1}.{u + 1} {role} {a_}-{b_}", truss=True)
         for c, xc in enumerate(xs_col):
             base = b.node(xc, y, 0.0, 0, f"F{j + 1}/{c + 1}")
-            chain = [base] + [nid for _, nid in sorted(col_heads[xc])]
+            heads = [nid for _, nid in sorted(col_heads[xc])]
+            if c in interior:
+                heads = heads[:1]   # interior column stops at the bottom chord; the post above is a truss web
+            chain = [base] + heads
             for lo, hi in zip(chain, chain[1:]):
-                b.el("C", lo, hi, S["column"], "column", "column", 1, f"Column F{j + 1} line {c + 1}")
+                b.el("C", lo, hi, S["column"], "column", "column", 1, f"Column F{j + 1} line {chr(65 + c)}")
             # pinned base: free to rotate about the horizontal axes; twist about the column axis is held by the base plate
             b.support(base, dofs=[1, 1, 1, 0, 0, 1] if p["support"] == "pinned" else None,
-                      kind=p["support"], footing={**p["footing"], "type": "isolated", "label": f"Footing F{j + 1}/{c + 1}"})
+                      kind=p["support"], footing={**p["footing"], "type": "isolated", "label": f"Footing F{j + 1}/{chr(65 + c)}"})
             ids[("col", c)] = base
             ids[("head", c)] = chain[1] if len(chain) > 1 else base
         frames.append(ids)
     # purlins along every roof node line (one line per unique node), loaded by one-way sheeting
     roof_line = []
-    for s_ in range(ns):
-        for r in roof:
-            nid = frames[0][(s_, r)]
+    for u, unit in enumerate(units):
+        for r in unit[3]:
+            nid = frames[0][(u, r)]
             if nid not in [q[1] for q in roof_line]:
-                roof_line.append(((s_, r), nid))
+                roof_line.append(((u, r), nid))
     xs_roof = [b.nodes[int(nid[1:]) - 1]["x"] for _, nid in roof_line]
     order = sorted(range(len(xs_roof)), key=lambda i: xs_roof[i])
     trib = dict(zip(order, _tributary([xs_roof[i] for i in order])))
@@ -416,12 +488,13 @@ def generate_warehouse(params: dict | None = None) -> dict:
     if not portal:
         # bottom-chord ties along the building (out-of-plane restraint of the bottom chords), anchored by
         # vertical cross-bracing between the trusses in the end bays
-        bottoms = [k for k in P if k.startswith("B") and k not in (left, right)]
-        tops = [k for k in P if not k.startswith("B")]
-        for s_ in range(ns):
+        heads = {frames[0][("head", c)] for c in range(len(xs_col))}
+        for s_, (_, P, _, _, (left, right)) in enumerate(units):
+            bottoms = [k for k in P if k.startswith("B") and k not in (left, right)]
+            tops = [k for k in P if not k.startswith("B")]
             for bk in bottoms:
-                if frames[0][(s_, bk)] in roof_ids:
-                    continue
+                if frames[0][(s_, bk)] in roof_ids or frames[0][(s_, bk)] in heads:
+                    continue   # roof nodes have purlins, column heads have eave struts
                 for j in range(nb):
                     b.el("X", frames[j][(s_, bk)], frames[j + 1][(s_, bk)], S["brace"], "brace", "tie", 1, f"Bottom-chord tie {bk} F{j + 1}-F{j + 2}", truss=True)
                 cand = [t for t in tops if abs(P[t][0] - P[bk][0]) < 1e-9] or sorted(tops, key=lambda t: abs(P[t][0] - P[bk][0]))[:1]
@@ -430,7 +503,7 @@ def generate_warehouse(params: dict | None = None) -> dict:
                         b.el("X", frames[j][(s_, bk)], frames[j + 1][(s_, tk)], S["brace"], "brace", "vertical brace", 1, f"Vertical brace bay {j + 1}", truss=True)
                         b.el("X", frames[j + 1][(s_, bk)], frames[j][(s_, tk)], S["brace"], "brace", "vertical brace", 1, f"Vertical brace bay {j + 1}", truss=True)
     if p.get("roof_bracing"):
-        for s_ in range(ns):
+        for s_, (_, _, _, roof, _) in enumerate(units):
             for j in end_bays:
                 for k in range(len(roof) - 1):
                     a1, a2 = (s_, roof[k]), (s_, roof[k + 1])
@@ -453,7 +526,7 @@ def generate_warehouse(params: dict | None = None) -> dict:
             "y": [{"name": str(j + 1), "pos": y} for j, y in enumerate(ys)],
             "levels": [{"name": "Base", "z": 0.0}, {"name": "Eave", "z": H}]}
     label = "portal frame" if portal else f"{roof_kind.replace('_', ' ')} trusses"
-    m = b.model(f"Warehouse {ns * span:g} × {nb * bay:g} m ({label})", p, sections, cases, grid)
+    m = b.model(f"Warehouse {width:g} × {nb * bay:g} m ({label})", p, sections, cases, grid)
     m["notes"] = ["Roof sheeting assumed to span one way between purlins (tributary width per purlin).",
                   "Purlins and eave struts are simply supported between frames (pinned ends).",
                   "Bracing is pin-ended and acts in tension and compression (no tension-only behaviour; buckling in Stability mode).",
@@ -463,8 +536,15 @@ def generate_warehouse(params: dict | None = None) -> dict:
     else:
         m["notes"].insert(2, "Truss members are pin-ended (axial only under nodal loads). Bottom chords are restrained out of plane "
                              "by longitudinal ties anchored by vertical bracing in the end bays.")
-    if ns > 1:
-        m["notes"].append(f"{ns} spans share the internal column lines; roof drainage/valley details are not modelled.")
+    span_txt = " + ".join(f"{L:g}" for L in spans)
+    if continuous:
+        lines = ", ".join(chr(65 + c) for c in sorted(interior))
+        m["notes"].append(f"One {'rafter' if portal else 'truss'} continuous over {ns} spans ({span_txt} m), carried by interior "
+                          f"columns on grid line{'s' if len(interior) > 1 else ''} {lines}"
+                          + ("" if portal else " at the bottom chord; near those columns the bottom chord is in compression "
+                             "under gravity (see the calculated forces)") + ".")
+    elif ns > 1:
+        m["notes"].append(f"{ns} spans ({span_txt} m) share the internal column lines; roof drainage/valley details are not modelled.")
     return m
 
 

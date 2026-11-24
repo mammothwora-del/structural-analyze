@@ -27,6 +27,8 @@ interface State {
   animate: boolean;
   showLabels: boolean;
   showSlabs: boolean;
+  showDims: boolean;            // dimension lines between grid lines
+  labelSize: number;            // scale of grid names and dimension text (1 = default)
   hiddenTypes: Record<string, boolean>;
   maxLevel: number | null;      // section cut: show up to this level
   exploded: number;             // exploded view factor (m per level)
@@ -83,6 +85,7 @@ export const useStore = create<State>((set, get) => ({
   model: null, results: null, resultsStale: false, busy: false, error: null, backendOk: null,
   mode: "model", view: "3d", loadSel: "DL", selection: null, multi: [],
   forceComp: "My", shellComp: "vm", deformScale: 50, animate: true, showLabels: false, showSlabs: true,
+  showDims: true, labelSize: (() => { try { return Math.min(3, Math.max(0.6, +(localStorage.getItem("labelSize") ?? 1) || 1)); } catch { return 1; } })(),
   hiddenTypes: {}, maxLevel: null, exploded: 0, ortho: false, pathDir: "auto", trace: null, isolated: null,
   bottomTab: "log", log: [], history: [], buckling: null, pdelta: null, bucklingMode: 0, stabBusy: false, stabError: null, steel: null, steelCode: "", steelBusy: false, steelError: null,
   designTab: "steel", rc: null, rcOptions: { main_grade: "SD40", tie_grade: "SR24", cover: 0.04 }, rcBusy: false, rcError: null, dialog: null, reportInfo: { engineer: "", project: "" }, colorTransform: "sqrt", units: (() => { try { return (localStorage.getItem("units") as UnitSystem) || "SI"; } catch { return "SI"; } })(),

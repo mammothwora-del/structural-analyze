@@ -218,7 +218,8 @@ function ModeBar() {
 }
 
 function ViewTools({ onView, wrap }: { onView: (v: ViewName) => void; wrap: React.RefObject<HTMLDivElement> }) {
-  const { ortho, set, showLabels, animate, showSlabs } = useStore();
+  const { ortho, set, showLabels, animate, showSlabs, showDims, labelSize } = useStore();
+  const setSize = (v: number) => { set({ labelSize: v }); try { localStorage.setItem("labelSize", String(v)); } catch { /* storage unavailable */ } };
   const B = ({ on, children, onClick, title }: { on?: boolean; children: React.ReactNode; onClick: () => void; title: string }) => (
     <button title={title} onClick={onClick} className={`w-full px-2 py-1 rounded text-[11px] text-left ${on ? "bg-accent/20 text-accent" : "text-ink-300 hover:bg-ink-700"}`}>{children}</button>
   );
@@ -234,6 +235,12 @@ function ViewTools({ onView, wrap }: { onView: (v: ViewName) => void; wrap: Reac
       <B title="Numeric labels" on={showLabels} onClick={() => set({ showLabels: !showLabels })}>Labels</B>
       <B title="Animate loads / flow / deformation" on={animate} onClick={() => set({ animate: !animate })}>Animate</B>
       <B title="Show slabs" on={showSlabs} onClick={() => set({ showSlabs: !showSlabs })}>Slabs</B>
+      <B title="Dimensions between grid lines" on={showDims} onClick={() => set({ showDims: !showDims })}>Dims</B>
+      <label className="px-1 pt-0.5 text-[10px] text-ink-400" title="Size of grid names and dimension text">
+        <div className="flex justify-between"><span>Text size</span><span>{Math.round(labelSize * 100)}%</span></div>
+        <input type="range" min={0.6} max={3} step={0.1} value={labelSize} aria-label="Grid and dimension text size"
+          className="w-full accent-sky-400" onChange={(e) => setSize(+e.target.value)} />
+      </label>
       <B title="Fullscreen" onClick={() => { if (document.fullscreenElement) document.exitFullscreen(); else wrap.current?.requestFullscreen(); }}>Fullscreen</B>
     </div>
   );

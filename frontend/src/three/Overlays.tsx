@@ -1,5 +1,6 @@
 import { Html, Line } from "@react-three/drei";
-import { useMemo } from "react";
+import { useFrame } from "@react-three/fiber";
+import { useMemo, useState } from "react";
 import * as THREE from "three";
 import { colorAt } from "../lib/colormap";
 import { factorsFor } from "../lib/combine";
@@ -13,11 +14,12 @@ import { usePositions } from "./Members";
 
 const V = (p: number[]) => new THREE.Vector3(p[0], p[1], p[2]);
 
-export function Label({ p, children, color = "#d3dce6", bg = "rgba(11,15,20,0.78)" }: { p: THREE.Vector3 | Vec3; children: React.ReactNode; color?: string; bg?: string }) {
+export function Label({ p, children, color = "#d3dce6", bg = "rgba(11,15,20,0.78)", size = 10.5, side }: { p: THREE.Vector3 | Vec3; children: React.ReactNode; color?: string; bg?: string; size?: number; side?: "left" | "right" }) {
   const pos = p instanceof THREE.Vector3 ? p : V(p);
   return (
     <Html position={pos} center zIndexRange={[10, 0]} style={{ pointerEvents: "none" }}>
-      <div style={{ color, background: bg, padding: "1px 5px", borderRadius: 3, fontSize: 10.5, fontFamily: "JetBrains Mono, monospace", whiteSpace: "nowrap", border: "1px solid rgba(127,147,171,0.25)" }}>{children}</div>
+      <div style={{ color, background: bg, padding: `${size / 10}px ${size / 2}px`, borderRadius: 3, fontSize: size, fontFamily: "JetBrains Mono, monospace", whiteSpace: "nowrap", border: "1px solid rgba(127,147,171,0.25)",
+        transform: side ? `translateX(calc(${side === "right" ? "" : "-"}50% ${side === "right" ? "+" : "-"} 4px))` : undefined }}>{children}</div>
     </Html>
   );
 }
@@ -112,27 +114,68 @@ export function NodesLayer({ model }: { model: Model }) {
   );
 }
 
+/** Dimension chain along one direction: a line with ticks at every grid line, each distance written at its middle. */
+function DimChain({ pos, at, dir, z, size, overall }: { pos: number[]; at: number; dir: "x" | "y"; z: number; size: number; overall?: boolean }) {
+  const u = useU();
+  const P = (s: number, t: number): Vec3 => (dir === "x" ? [s, t, z] : [t, s, z]);
+  const tick = 0.25 * Math.max(1, size);
+  const txt = (d: number) => `${+u.c("length", d).toFixed(3)} ${u.u("length")}`;
+  const color = overall ? "#c7d6e6" : "#7fa6c9";
+  return (
+    <group>
+      <Line points={[P(pos[0], at), P(pos[pos.length - 1], at)]} color={color} lineWidth={1} />
+      {pos.map((s, k) => <Line key={k} points={[P(s, at - tick), P(s, at + tick)]} color={color} lineWidth={1.5} />)}
+      {pos.slice(1).map((s, k) => (
+        <Label key={k} p={P((pos[k] + s) / 2, at)} color={overall ? "#ffffff" : "#d8e8f7"} size={10 * size}
+          side={dir === "y" && overall ? "left" : undefined}>{txt(s - pos[k])}</Label>
+      ))}
+    </group>
+  );
+}
+
+/** True while the camera looks (nearly) along the x or the y axis, so a dimension chain in that direction is seen edge-on. */
+function useEdgeOn() {
+  const [edge, setEdge] = useState({ x: false, y: false });
+  const d = useMemo(() => new THREE.Vector3(), []);
+  useFrame(({ camera }) => {
+    camera.getWorldDirection(d);
+    const next = { x: Math.abs(d.x) > 0.93, y: Math.abs(d.y) > 0.93 };
+    if (next.x !== edge.x || next.y !== edge.y) setEdge(next);
+  });
+  return edge;
+}
+
 export function GridLines({ model }: { model: Model }) {
+  const { showDims: dims, labelSize } = useStore();
+  const edge = useEdgeOn();
   if (!model.grid) return null;
   const b = modelBounds(model);
-  const ext = 1.5;
+  const k = Math.max(1, labelSize);
+  const ext = 1.5 * k;
   const { x, y } = model.grid;
   const x0 = x[0].pos - ext, x1 = x[x.length - 1].pos + ext, y0 = y[0].pos - ext, y1 = y[y.length - 1].pos + ext;
   const z = b.min[2] - 0.02;
+  const xs = x.map((g) => g.pos), ys = y.map((g) => g.pos);
+  // outward from the building: grid line ends, grid names, the chain of spans, then the overall length (a little lower,
+  // so that in an elevation it reads as a second row). A chain seen end-on in an elevation is hidden.
   return (
     <group>
       {x.map((g) => (
         <group key={"x" + g.name}>
           <Line points={[[g.pos, y0, z], [g.pos, y1, z]]} color="#3d5168" lineWidth={1} dashed dashSize={0.4} gapSize={0.25} />
-          <Label p={[g.pos, y0 - 0.6, z]} color="#9fc3e6">{g.name}</Label>
+          {!edge.x && <Label p={[g.pos, y0 - 0.6 * k, z]} color="#9fc3e6" size={10.5 * labelSize}>{g.name}</Label>}
         </group>
       ))}
       {y.map((g) => (
         <group key={"y" + g.name}>
           <Line points={[[x0, g.pos, z], [x1, g.pos, z]]} color="#3d5168" lineWidth={1} dashed dashSize={0.4} gapSize={0.25} />
-          <Label p={[x0 - 0.6, g.pos, z]} color="#9fc3e6">{g.name}</Label>
+          {!edge.y && <Label p={[x0 - 0.6 * k, g.pos, z]} color="#9fc3e6" size={10.5 * labelSize}>{g.name}</Label>}
         </group>
       ))}
+      {dims && !edge.x && xs.length > 1 && <DimChain pos={xs} at={y0 - 1.5 * k} dir="x" z={z} size={labelSize} />}
+      {dims && !edge.x && xs.length > 2 && <DimChain pos={[xs[0], xs[xs.length - 1]]} at={y0 - 2.6 * k} dir="x" z={z - 0.8 * k} size={labelSize} overall />}
+      {dims && !edge.y && ys.length > 1 && <DimChain pos={ys} at={x0 - 2.1 * k} dir="y" z={z} size={labelSize} />}
+      {dims && !edge.y && ys.length > 2 && <DimChain pos={[ys[0], ys[ys.length - 1]]} at={x0 - 3.9 * k} dir="y" z={z - 0.8 * k} size={labelSize} overall />}
     </group>
   );
 }
