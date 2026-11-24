@@ -70,7 +70,9 @@ def section_properties(sec: dict) -> SectionProps:
     Supported shapes (dimensions in metres):
       * ``rect``:    b, h
       * ``I``:       h (overall depth), bf (flange width), tf, tw  (doubly symmetric)
-      * ``circle``:  d
+      * ``circle``:  d (solid)
+      * ``pipe``:    d (outside diameter), t (wall)      - circular hollow section (CHS)
+      * ``box``:     b, h, t (wall)                      - rectangular hollow section (RHS/SHS)
       * ``general``: A, Iy, Iz, J, b, h given directly
     """
     shape = sec.get("shape", "rect")
@@ -94,6 +96,26 @@ def section_properties(sec: dict) -> SectionProps:
         A = math.pi * d**2 / 4
         I = math.pi * d**4 / 64
         return SectionProps(A, I, I, 2 * I, I / (d / 2), I / (d / 2), d, d)
+    if shape == "pipe":
+        d, t = float(sec["d"]), float(sec["t"])
+        di = d - 2 * t
+        if di < 0:
+            raise ValueError("Pipe wall thickness larger than radius")
+        A = math.pi * (d**2 - di**2) / 4
+        I = math.pi * (d**4 - di**4) / 64
+        return SectionProps(A, I, I, 2 * I, I / (d / 2), I / (d / 2), d, d)
+    if shape == "box":
+        b, h, t = float(sec["b"]), float(sec["h"]), float(sec["t"])
+        bi, hi = b - 2 * t, h - 2 * t
+        if bi < 0 or hi < 0:
+            raise ValueError("Box wall thickness too large")
+        A = b * h - bi * hi
+        Iy = (b * h**3 - bi * hi**3) / 12.0
+        Iz = (h * b**3 - hi * bi**3) / 12.0
+        # thin-walled closed section (Bredt): J = 4 Am^2 t / perimeter (mid-line)
+        bm, hm = b - t, h - t
+        J = 4 * (bm * hm) ** 2 * t / (2 * (bm + hm))
+        return SectionProps(A, Iy, Iz, J, Iy / (h / 2), Iz / (b / 2), b, h)
     if shape == "general":
         b, h = float(sec.get("b", 0.3)), float(sec.get("h", 0.3))
         Iy, Iz = float(sec["Iy"]), float(sec["Iz"])

@@ -41,7 +41,26 @@ DEFAULTS = {
     "mesh_size": 1.0,                # m, target shell element size
     "walls": "none",                 # 'none' | 'x' (walls in the XZ plane on the two outer Y lines) | 'xy'
     "wall_thickness": 0.2,
+    "bracing": "none",               # 'none' | 'x' | 'diagonal'  (steel braces in the end bays of the outer frames)
+    "brace": {"shape": "box", "b": 0.15, "h": 0.15, "t": 0.008},
 }
+
+STEEL_BY_STD = {"TH": "SS400", "EN1990": "S355", "ASCE7": "A992"}
+
+
+def generate(params: dict | None = None) -> dict:
+    """Dispatch to the generator for params['type'] (building | truss2d | warehouse | space_truss)."""
+    from .structures import generate_space_truss, generate_truss2d, generate_warehouse
+    t = (params or {}).get("type", "building")
+    if t == "building":
+        return generate_building(params)
+    if t == "truss2d":
+        return generate_truss2d(params)
+    if t == "warehouse":
+        return generate_warehouse(params)
+    if t == "space_truss":
+        return generate_space_truss(params)
+    raise ValueError(f"Unknown structure type '{t}'")
 
 COMBOS = {
     # Thai practice, strength design (EIT 1008-38 / Ministerial Regulation load factors based on ACI 318-95):
@@ -218,6 +237,29 @@ def generate_building(params: dict | None = None) -> dict:
                 n = lambda y, l: node_at[(round(x, 6), round(y, 6), l)]
                 wall([n(a, lv - 1), n(b, lv - 1), n(b, lv), n(a, lv)], lv, f"Wall x={x:g} y[{a:g},{b:g}] storey {lv}")
 
+    # Steel bracing (pin-ended truss members) in the end bays of the outer frames.
+    bmode = p.get("bracing", "none")
+    if bmode in ("x", "diagonal"):
+        steel = STEEL_BY_STD.get(p["standard"], "S355")
+        sections["BR"] = {**p["brace"], "material": steel, "name": f"Brace {_sec_name({**p['brace'], 'material': steel})}"}
+        bays = []
+        for y in (ys[0], ys[-1]):
+            for a, b in sorted({(xs[0], xs[1]), (xs[-2], xs[-1])}):
+                bays.append(((a, y), (b, y)))
+        if len(ys) > 1:
+            for x in (xs[0], xs[-1]):
+                for a, b in sorted({(ys[0], ys[1]), (ys[-2], ys[-1])}):
+                    bays.append(((x, a), (x, b)))
+        for (p1, p2) in bays:
+            for lv in range(1, nlev + 1):
+                n1b, n2b = node_at[(round(p1[0], 6), round(p1[1], 6), lv - 1)], node_at[(round(p2[0], 6), round(p2[1], 6), lv - 1)]
+                n1t, n2t = node_at[(round(p1[0], 6), round(p1[1], 6), lv)], node_at[(round(p2[0], 6), round(p2[1], 6), lv)]
+                pairs = [(n1b, n2t)] + ([(n2b, n1t)] if bmode == "x" else [])
+                for i, j in pairs:
+                    elements.append({"id": f"X{len([e for e in elements if e['id'][0] == 'X']) + 1}", "type": "brace", "role": "brace",
+                                     "i": i, "j": j, "section": "BR", "level": lv, "truss": True,
+                                     "label": f"Brace storey {lv} ({gname(*p1)}-{gname(*p2)})"})
+
     supports = []
     for x in xs:
         for y in ys:
@@ -290,6 +332,10 @@ def generate_building(params: dict | None = None) -> dict:
 
 
 def _sec_name(s):
+    if s.get("shape") == "box":
+        return f"RHS {s['h'] * 1000:.0f}x{s['b'] * 1000:.0f}x{s['t'] * 1000:.1f} {s.get('material', '')}"
+    if s.get("shape") == "pipe":
+        return f"CHS {s['d'] * 1000:.1f}x{s['t'] * 1000:.1f} {s.get('material', '')}"
     if s.get("shape") == "rect":
         return f"{s['b'] * 1000:.0f}x{s['h'] * 1000:.0f} {s.get('material', '')}"
     if s.get("shape") == "I":

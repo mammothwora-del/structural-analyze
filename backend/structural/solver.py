@@ -4,6 +4,9 @@
   (ux, uy, uz, rx, ry, rz), 12x12 element stiffness.
 * Global stiffness assembled as a SciPy sparse matrix and solved with a sparse
   LU factorisation (SuperLU).
+* Member end releases (hinges) by static condensation of the released local
+  rotational DOFs; truss members = moments released at both ends and torsion
+  at end j (axial force only under nodal loads).
 * Member loads: piecewise-linear distributed loads and concentrated loads at any
   position, converted to consistent (work-equivalent) nodal loads.
 * Element end forces f = k u_local + f_fixed.
@@ -38,6 +41,21 @@ SUPPORT_TYPES = {
     "pinned": [1, 1, 1, 0, 0, 0],
     "roller": [0, 0, 1, 0, 0, 0],
 }
+
+
+TRUSS_RELEASES = ([0, 0, 0, 0, 1, 1], [0, 0, 0, 1, 1, 1])
+
+
+def element_releases(e: dict):
+    """Released local DOFs at ends i and j as two 6-lists [ux, uy, uz, rx, ry, rz] (1 = released)."""
+    r = e.get("releases")
+    if r:
+        ri = [int(bool(v)) for v in (r.get("i") or [0] * 6)]
+        rj = [int(bool(v)) for v in (r.get("j") or [0] * 6)]
+        return ri, rj
+    if e.get("truss") or e.get("type") == "truss":
+        return list(TRUSS_RELEASES[0]), list(TRUSS_RELEASES[1])
+    return [0] * 6, [0] * 6
 
 
 class ModelError(ValueError):
@@ -215,12 +233,30 @@ class FrameModel:
             props = section_properties(sec)
             mp = material_props(mats[mat_id])
             L, R = local_axes(self.node_xyz[e["i"]], self.node_xyz[e["j"]], float(e.get("roll", 0.0)))
-            self.elements.append({
-                "id": e["id"], "i": e["i"], "j": e["j"], "L": L, "R": R,
-                "props": props, "mat": mp, "material": mat_id,
-                "nst": e.get("n_stations"), "ndense": int(e.get("n_dense", 41)),
-                "k_local": frame_stiffness_local(mp["E"], mp["G"], props.A, props.Iy, props.Iz, props.J, L),
-            })
+            k_full = frame_stiffness_local(mp["E"], mp["G"], props.A, props.Iy, props.Iz, props.J, L)
+            ri, rj = element_releases(e)
+            if any(ri[:3]) or any(rj[:3]):
+                raise ModelError(f"Element {e['id']}: only rotational end releases (rx, ry, rz) are supported")
+            if ri[3] and rj[3]:
+                ri = ri[:3] + [0] + ri[4:]   # torsion released at both ends would be a mechanism
+                self.warnings.append({"level": "info", "code": "torsion_release",
+                                      "message": f"Element {e['id']}: torsion released at both ends; kept at end i."})
+            rel = np.array([k for k in range(6) if ri[k]] + [6 + k for k in range(6) if rj[k]], dtype=int)
+            item = {"id": e["id"], "i": e["i"], "j": e["j"], "L": L, "R": R,
+                    "props": props, "mat": mp, "material": mat_id, "rel": rel, "releases": (ri, rj),
+                    "nst": e.get("n_stations"), "ndense": int(e.get("n_dense", 41)), "k_full": k_full}
+            if rel.size:
+                keep = np.setdiff1d(np.arange(12), rel)
+                Krr = k_full[np.ix_(rel, rel)]
+                item["keep"] = keep
+                item["Krr_inv"] = np.linalg.inv(Krr)
+                item["Krc"] = k_full[np.ix_(rel, keep)]
+                kc = np.zeros((12, 12))
+                kc[np.ix_(keep, keep)] = k_full[np.ix_(keep, keep)] - item["Krc"].T @ item["Krr_inv"] @ item["Krc"]
+                item["k_local"] = kc
+            else:
+                item["k_local"] = k_full
+            self.elements.append(item)
         self.el_index = {e["id"]: k for k, e in enumerate(self.elements)}
 
         self.shells = []
@@ -285,6 +321,29 @@ class FrameModel:
         self.K = self._assemble()
         self.free = np.where(~self.restrained)[0]
         self._factorize()
+
+    # ---------------------------------------------------------------- releases
+    @staticmethod
+    def _eq(e, mlo: "MemberLoadLocal"):
+        """Consistent (fixed-end) nodal loads, condensed for end releases (zero at released DOFs)."""
+        P = mlo.equivalent_nodal(e["L"])
+        if e["rel"].size:
+            r, c = e["rel"], e["keep"]
+            Pc = P.copy()
+            Pc[c] -= e["Krc"].T @ (e["Krr_inv"] @ P[r])
+            Pc[r] = 0.0
+            return Pc, P
+        return P, P
+
+    @staticmethod
+    def _recover(e, d_loc, P_full):
+        """Member-end rotations at released DOFs (they differ from the node rotations)."""
+        if e["rel"].size:
+            d = d_loc.copy()
+            r, c = e["rel"], e["keep"]
+            d[r] = e["Krr_inv"] @ (P_full[r] - e["Krc"] @ d_loc[c])
+            return d
+        return d_loc
 
     # ---------------------------------------------------------------- checks
     def _check_connectivity(self):
@@ -352,7 +411,18 @@ class FrameModel:
         diag = np.abs(Kff.diagonal())
         scale = diag.max() if diag.size else 1.0
         self.unstable_dofs = []
-        zero = np.where(diag <= 1e-12 * scale)[0]
+        zero_all = np.where(diag <= 1e-12 * scale)[0]
+        # Rotations of pin joints (e.g. nodes where only truss members meet) have no stiffness at all:
+        # their row and column of K are zero, so fixing them changes nothing. Translations are real errors.
+        rot = np.array([self.free[z] % DOF >= 3 for z in zero_all], dtype=bool)
+        zero_rot, zero = zero_all[rot], zero_all[~rot]
+        self.pinned_rotations = [int(self.free[z]) for z in zero_rot]
+        if zero_rot.size:
+            nn = len({self.free[z] // DOF for z in zero_rot})
+            self.warnings.append({"level": "info", "code": "pin_joint_rotations",
+                                  "message": f"{zero_rot.size} rotational DOF(s) at {nn} pin joint(s) (truss nodes / released "
+                                             f"member ends) have no rotational stiffness and were fixed. This has no effect on "
+                                             f"the results; a nodal moment applied there cannot be carried."})
         if zero.size:
             labels = [self._dof_label(self.free[z]) for z in zero[:20]]
             self.unstable_dofs += [int(self.free[z]) for z in zero]
@@ -361,6 +431,7 @@ class FrameModel:
                                              f"They were restrained to allow a solution; results near them are not meaningful.",
                                   "dofs": labels})
             # restrain to make solvable but keep flag
+        if zero_all.size:
             Kff = Kff + sp.csc_matrix((np.where(diag <= 1e-12 * scale, scale, 0.0), (np.arange(diag.size), np.arange(diag.size))),
                                       shape=Kff.shape)
         # Nodes in parts that are not connected to any support: restrain them so
@@ -531,7 +602,7 @@ class FrameModel:
         Fe = F.copy()
         for k, mlo in member.items():
             e = self.elements[k]
-            Fe[e["dofs"]] += e["T"].T @ mlo.equivalent_nodal(e["L"])
+            Fe[e["dofs"]] += e["T"].T @ self._eq(e, mlo)[0]
 
         u = np.zeros(self.ndof)
         rhs = Fe[self.free]
@@ -563,7 +634,9 @@ class FrameModel:
         for k, e in enumerate(self.elements):
             mlo = member.get(k, MemberLoadLocal())
             d_loc = e["T"] @ u[e["dofs"]]
-            f = e["k_local"] @ d_loc - mlo.equivalent_nodal(e["L"])
+            Pc, Pf = self._eq(e, mlo)
+            f = e["k_local"] @ d_loc - Pc
+            d_loc = self._recover(e, d_loc, Pf)
             extra = sorted(getattr(self, "extra_bps", {}).get(k, ()))
             el_results[e["id"]] = self._stations(e, f, d_loc, mlo, e["nst"] or n_stations, extra)
 
@@ -660,5 +733,6 @@ class FrameModel:
 
     def element_info(self):
         return {e["id"]: {"L": e["L"], "axes": e["R"].tolist(), "props": e["props"].as_dict(),
+                          "releases": [list(e["releases"][0]), list(e["releases"][1])],
                           "E": e["mat"]["E"], "G": e["mat"]["G"], "material": e["material"]}
                 for e in self.elements}
