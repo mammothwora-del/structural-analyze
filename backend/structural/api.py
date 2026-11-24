@@ -83,6 +83,27 @@ def run_steel_design(req: dict):
         raise HTTPException(400, f"Invalid request: {exc!r}") from exc
 
 
+@app.post("/api/design/steel/suggest")
+def run_steel_suggest(req: dict):
+    """{"model": {...}, "code": ..., "target": 1.0, "groups": {"COL": "keep" | "lock" | "H" | "SHS" | "RHS" | "CHS"},
+    "limit_slenderness": true}"""
+    from .steel_sizing import suggest_sections
+    try:
+        return _r(suggest_sections(req["model"], req.get("code") or None, float(req.get("target") or 1.0), req.get("groups") or {},
+                                   limit_slenderness=bool(req.get("limit_slenderness", True))))
+    except ModelError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except (KeyError, ValueError, IndexError, TypeError) as exc:
+        raise HTTPException(400, f"Invalid request: {exc}") from exc
+
+
+@app.get("/api/sections/catalog")
+def section_catalog():
+    """Standard steel section sizes (nominal dimensions in m, area in m², mass in kg/m)."""
+    from .steel_catalog import CATALOG, FAMILIES
+    return {"families": FAMILIES, "sections": CATALOG}
+
+
 @app.post("/api/design/rc")
 def run_rc_design(req: dict):
     """{"model": {...}, "options": {"main_grade": "SD40", "tie_grade": "SR24", "cover": 0.04, ...}}"""

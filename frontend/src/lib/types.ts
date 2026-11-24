@@ -1,7 +1,9 @@
 export type Vec3 = [number, number, number];
 
 export interface Node { id: string; x: number; y: number; z: number; level?: number; grid?: string }
-export interface Section { name?: string; shape: "rect" | "I" | "circle" | "pipe" | "box" | "general"; material: string; b?: number; h?: number; bf?: number; tf?: number; tw?: number; d?: number; t?: number; A?: number; Iy?: number; Iz?: number; J?: number }
+export interface Section { name?: string; shape: "rect" | "I" | "circle" | "pipe" | "box" | "general"; material: string; b?: number; h?: number; bf?: number; tf?: number; tw?: number; d?: number; t?: number; A?: number; Iy?: number; Iz?: number; J?: number;
+  /** "rolled" | "welded" (I) or "cold" | "hot" (hollow); catalog = standard size name when picked from the tables */
+  fab?: string; catalog?: string }
 export interface Material { name: string; kind: string; E: number; nu: number; density: number; fck?: number; fy?: number }
 /** End releases: 6 flags per end in local axes [ux, uy, uz, rx, ry, rz], 1 = released (only rotations allowed). */
 export interface Releases { i?: number[]; j?: number[] }
@@ -110,4 +112,16 @@ export interface RcDesignResult {
   code: "EIT1008"; code_name: string; combinations: string[]; members: Record<string, RcMember>;
   options: { main_grade: string; tie_grade: string; cover: number };
   summary: SteelDesignResult["summary"]; notes: string[];
+}
+
+/** Standard steel size (nominal dimensions in m, A in m², mass in kg/m). */
+export interface CatalogEntry { family: "H" | "SHS" | "RHS" | "CHS"; name: string; shape: "I" | "box" | "pipe"; fab: string; h?: number; bf?: number; tw?: number; tf?: number; b?: number; t?: number; d?: number; A: number; mass: number }
+export interface SteelCatalog { families: Record<string, string>; sections: CatalogEntry[] }
+export interface SuggestGroup {
+  section: string; locked: boolean; families: string[]; from: string; to: string; changed: boolean; n_members: number;
+  max_util: number | null; n_fail: number; mass_before: number | null; mass_after: number | null; largest_too_small: boolean;
+}
+export interface SuggestResult {
+  code: string; code_name: string; target: number; converged: boolean; limit_slenderness: boolean; iterations: number; groups: SuggestGroup[];
+  sections: Record<string, Section>; design: SteelDesignResult; notes: string[];
 }

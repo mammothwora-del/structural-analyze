@@ -3,6 +3,7 @@ import type { Section } from "../lib/types";
 import { useStore, useU } from "../store";
 import { elementColorKey, TYPE_COLORS, TYPE_LABELS } from "../three/Members";
 import { GenPreview, isRoofTruss, PicturePicker, TRUSS_TYPES, TrussTypePicker } from "./GenPreview";
+import { SectionEditor } from "./SectionEditor";
 
 const list = (s: string) => s.split(/[,\s]+/).filter(Boolean).map(Number).filter((x) => x > 0);
 
@@ -474,52 +475,47 @@ function AddNode() {
 }
 
 function Sections() {
-  const { model, editModel } = useStore();
-  const [n, setN] = useState({ id: "", shape: "rect", b: 300, h: 500, bf: 200, tf: 15, tw: 9, d: 114.3, t: 6, material: "C30/37" });
+  const { model, editModel, redesign, busy, steelBusy } = useStore();
+  const [edit, setEdit] = useState<string | null>(null);
+  const [newId, setNewId] = useState("");
   if (!model) return null;
+  const steelMat = Object.keys(model.materials).find((k) => model.materials[k].kind === "steel") ?? Object.keys(model.materials)[0];
+  const save = (k: string, sec: Section, rerun: boolean) => {
+    editModel((m) => { m.sections[k] = sec; });
+    setEdit(null);
+    if (rerun) redesign();
+  };
   return (
     <div>
       <div className="panel-title mb-2">Materials</div>
       {Object.entries(model.materials).map(([k, m]) => (
-        <div key={k} className="flex justify-between text-[11px] py-0.5 border-b border-ink-800"><span>{m.name}</span><span className="num text-ink-400">E {m.E / 1000} GPa · γ {m.density}</span></div>
+        <div key={k} className="flex justify-between text-[11px] py-0.5 border-b border-ink-800"><span>{m.name}</span><span className="num text-ink-400">E {+(m.E / 1000).toFixed(1)} GPa · γ {+m.density.toFixed(2)}</span></div>
       ))}
-      <div className="panel-title mt-4 mb-2">Sections</div>
-      {Object.entries(model.sections).map(([k, s]) => (
-        <div key={k} className="flex justify-between text-[11px] py-0.5 border-b border-ink-800">
-          <span><b className="text-ink-200">{k}</b> {s.name}</span>
-          <span className="text-ink-400">{model.elements.filter((e) => e.section === k).length} used</span>
-        </div>
-      ))}
-      <div className="panel-title mt-4 mb-2">New section</div>
-      <div className="grid grid-cols-2 gap-1">
-        <input className="input" placeholder="id e.g. B2" value={n.id} onChange={(e) => setN({ ...n, id: e.target.value })} />
-        <select className="input" value={n.shape} onChange={(e) => setN({ ...n, shape: e.target.value, material: e.target.value === "rect" ? "C30/37" : "S355" })}><option value="rect">Rectangle</option><option value="I">I-section</option><option value="pipe">Tube (CHS)</option><option value="box">Box (RHS/SHS)</option></select>
-        {n.shape === "pipe" ? (<>
-          <input className="input" type="number" title="d (mm)" value={n.d} onChange={(e) => setN({ ...n, d: +e.target.value })} />
-          <input className="input" type="number" title="t (mm)" value={n.t} onChange={(e) => setN({ ...n, t: +e.target.value })} />
-        </>) : n.shape === "box" ? (<>
-          <input className="input" type="number" title="b (mm)" value={n.b} onChange={(e) => setN({ ...n, b: +e.target.value })} />
-          <input className="input" type="number" title="h (mm)" value={n.h} onChange={(e) => setN({ ...n, h: +e.target.value })} />
-          <input className="input col-span-2" type="number" title="t (mm)" value={n.t} onChange={(e) => setN({ ...n, t: +e.target.value })} />
-        </>) : n.shape === "rect" ? (<>
-          <input className="input" type="number" title="b (mm)" value={n.b} onChange={(e) => setN({ ...n, b: +e.target.value })} />
-          <input className="input" type="number" title="h (mm)" value={n.h} onChange={(e) => setN({ ...n, h: +e.target.value })} />
-        </>) : (<>
-          <input className="input" type="number" title="h (mm)" value={n.h} onChange={(e) => setN({ ...n, h: +e.target.value })} />
-          <input className="input" type="number" title="bf (mm)" value={n.bf} onChange={(e) => setN({ ...n, bf: +e.target.value })} />
-          <input className="input" type="number" title="tf (mm)" value={n.tf} onChange={(e) => setN({ ...n, tf: +e.target.value })} />
-          <input className="input" type="number" title="tw (mm)" value={n.tw} onChange={(e) => setN({ ...n, tw: +e.target.value })} />
-        </>)}
-        <select className="input col-span-2" value={n.material} onChange={(e) => setN({ ...n, material: e.target.value })}>{Object.keys(model.materials).map((m) => <option key={m}>{m}</option>)}</select>
-      </div>
-      <button className="btn mt-2 w-full" disabled={!n.id || !!model.sections[n.id]} onClick={() => editModel((m) => {
-        const s: Section = n.shape === "rect" ? { shape: "rect", b: n.b / 1000, h: n.h / 1000, material: n.material, name: `${n.b}x${n.h} ${n.material}` }
-          : n.shape === "pipe" ? { shape: "pipe", d: n.d / 1000, t: n.t / 1000, material: n.material, name: `CHS ${n.d}x${n.t} ${n.material}` }
-          : n.shape === "box" ? { shape: "box", b: n.b / 1000, h: n.h / 1000, t: n.t / 1000, material: n.material, name: `RHS ${n.h}x${n.b}x${n.t} ${n.material}` }
-          : { shape: "I", h: n.h / 1000, bf: n.bf / 1000, tf: n.tf / 1000, tw: n.tw / 1000, material: n.material, name: `I ${n.h}x${n.bf} ${n.material}` };
-        m.sections[n.id] = s;
-      })}>Add section</button>
-      <div className="text-[10px] text-ink-400 mt-2">Select members (shift-click) and assign the section in the right panel.</div>
+      <div className="panel-title mt-4 mb-1">Sections</div>
+      <div className="text-[10px] text-ink-500 mb-1.5">The generator's sizes are starting values, not designed. Click a section to change its shape and size for every member that uses it, or use Suggest sizes in Design mode.</div>
+      {Object.entries(model.sections).map(([k, s]) => {
+        const used = model.elements.filter((e) => e.section === k).length;
+        return (
+          <div key={k} className="border-b border-ink-800">
+            <button className={`w-full flex justify-between gap-1 text-left text-[11px] py-1 ${edit === k ? "text-accent" : "hover:text-ink-100"}`} onClick={() => setEdit(edit === k ? null : k)}>
+              <span className="truncate"><b className="text-ink-200">{k}</b> {s.name}</span>
+              <span className="shrink-0 text-ink-400">{used} used {edit === k ? "▾" : "✎"}</span>
+            </button>
+            {edit === k && (
+              <SectionEditor model={model} value={s} onCancel={() => setEdit(null)} onSave={(sec) => save(k, sec, false)}
+                onSaveRedesign={busy || steelBusy ? undefined : (sec) => save(k, sec, true)} />
+            )}
+          </div>
+        );
+      })}
+      <div className="panel-title mt-4 mb-1">New section</div>
+      <input className="input mb-1" placeholder="id, e.g. COL2" value={newId} onChange={(e) => setNewId(e.target.value.trim())} />
+      {newId && model.sections[newId] && <div className="text-[10px] text-red-300">That id is already used.</div>}
+      {newId && !model.sections[newId] && (
+        <SectionEditor key="new" model={model} value={{ shape: "I", material: steelMat, ...{ h: 0.3, bf: 0.15, tw: 0.0065, tf: 0.009 } }} saveLabel="Add section"
+          onSave={(sec) => { editModel((m) => { m.sections[newId] = sec; }); setNewId(""); }} />
+      )}
+      <div className="text-[10px] text-ink-400 mt-2">To give some members a different section: select them (shift-click) and pick the section in the right panel.</div>
     </div>
   );
 }

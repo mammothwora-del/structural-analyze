@@ -125,6 +125,17 @@ The integrated values at end j are checked against the FE nodal solution (`end_c
 * Member checks use the largest moments along the member with C_m from Table B.3 (linear moment: 0.6 + 0.4ψ ≥ 0.4;
   span moment governing: 1.0, conservative). Cross-section checks are made at every station.
 
+## Suggested steel sizes (`structural/steel_sizing.py`)
+* A group is a section id. Every member of the group gets the same size, and the group's worst member governs.
+* Candidates are standard sizes of the chosen family, lightest first, from `steel_catalog.py`. "Same shape" means:
+  I to H, box to SHS + RHS, pipe to CHS. The first candidate passes when every member of the group meets the target
+  utilisation with the current forces and, if asked, KL/r ≤ 200 (members ever in compression) or L/r ≤ 300 (members
+  only in tension).
+* Repeat: analyse, size every group, until no group changes (at most 6 passes). The final model is then analysed and
+  checked by `steel_design()`. Only that result is reported, as **calculated**.
+* A group where even the largest size fails keeps the largest size and is flagged. Deflection is not a sizing
+  criterion.
+
 ## Project files, DXF import and PDF report
 
 - `.sproj` = `{"format": "structural-analyze-project", "version": 1, "saved_at", "model", "settings"}`. Results are
