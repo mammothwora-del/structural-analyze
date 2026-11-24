@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .analysis import analyze
+from .analysis import _r, analyze
 from .generator import DEFAULTS, generate as generate_structure
 from .structures import LATTICE_DEFAULTS, SPACE_DEFAULTS, TRUSS_DEFAULTS, WAREHOUSE_DEFAULTS
 from .sections import MATERIALS, section_properties
@@ -65,6 +65,18 @@ def run_stability(req: dict):
         if req.get("kind", "buckling") == "pdelta":
             return pdelta(model, load, n_seg=int(req.get("n_seg", 2)))
         return _r(buckling(model, load, n_modes=int(req.get("n_modes", 4)), n_seg=int(req.get("n_seg", 4))))
+    except ModelError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except (KeyError, ValueError, IndexError, TypeError) as exc:
+        raise HTTPException(400, f"Invalid request: {exc!r}") from exc
+
+
+@app.post("/api/design/steel")
+def run_steel_design(req: dict):
+    """{"model": {...}, "code": "AISC360" | "EC3" | "EIT" (default from the model's standard)}"""
+    from .steel_design import steel_design
+    try:
+        return _r(steel_design(req["model"], req.get("code") or None))
     except ModelError as exc:
         raise HTTPException(422, str(exc)) from exc
     except (KeyError, ValueError, IndexError, TypeError) as exc:

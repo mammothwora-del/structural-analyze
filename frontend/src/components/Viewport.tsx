@@ -17,6 +17,7 @@ import { Hinges } from "../three/Hinges";
 import { shellScale } from "../lib/shells";
 import { Legend } from "./Legend";
 import { StabilityPanel } from "./StabilityPanel";
+import { DesignPanel, designDisplay } from "./DesignPanel";
 import { BucklingShape } from "../three/BucklingShape";
 
 THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
@@ -30,6 +31,7 @@ export const MODES: { id: Mode; label: string; needs?: boolean; key: string }[] 
   { id: "forces", label: "Internal Forces", needs: true, key: "6" },
   { id: "reactions", label: "Foundation Reactions", needs: true, key: "7" },
   { id: "stability", label: "Stability", key: "8" },
+  { id: "design", label: "Steel Design", key: "9" },
 ];
 
 type ViewName = "iso" | "top" | "front" | "right";
@@ -79,6 +81,7 @@ export function Viewport() {
   const showResults = needsResults && usable && res;
   const trMax = trace ? Math.max(...Object.values(trace.elements)) : 1;
   const bMode = mode === "stability" ? s.buckling?.modes[s.bucklingMode] ?? null : null;
+  const dDisplay = mode === "design" ? designDisplay(s.steel) : null;
 
   return (
     <div ref={wrap} className="relative flex-1 min-h-0 bg-[radial-gradient(ellipse_at_center,_#16202b_0%,_#0b0f14_75%)]">
@@ -102,7 +105,15 @@ export function Viewport() {
           </>
         )}
 
-        {mode !== "stability" && (mode === "model" || mode === "loads" || !showResults) && (
+        {mode === "design" && (
+          <>
+            <Members model={model} results={null} display={dDisplay} deform={0} colorMode={dDisplay ? "values" : "type"} />
+            {panels(0.06)}
+            <Hinges model={model} />
+          </>
+        )}
+
+        {mode !== "stability" && mode !== "design" && (mode === "model" || mode === "loads" || !showResults) && (
           <>
             <Members model={model} results={usable} display={null} deform={0} colorMode={mode === "loads" ? "neutral" : "type"} />
             {panels()}
@@ -181,6 +192,7 @@ export function Viewport() {
       {showResults && mode === "loadpath" && <LoadPathBadge />}
       {mode === "loads" && <LoadsInfo />}
       {mode === "stability" && <StabilityPanel />}
+      {mode === "design" && <DesignPanel model={model} />}
       {bMode && (
         <div className="absolute left-1/2 -translate-x-1/2 bottom-3 rounded-md border border-ink-700 bg-ink-900/90 px-3 py-1.5 text-[11px] text-ink-300 backdrop-blur">
           <b className="text-emerald-300">CALCULATED</b> buckling mode {s.bucklingMode + 1}, α<sub>cr</sub> = <b className="text-ink-100 num">{bMode.factor.toFixed(3)}</b>

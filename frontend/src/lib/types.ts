@@ -5,7 +5,9 @@ export interface Section { name?: string; shape: "rect" | "I" | "circle" | "pipe
 export interface Material { name: string; kind: string; E: number; nu: number; density: number; fck?: number; fy?: number }
 /** End releases: 6 flags per end in local axes [ux, uy, uz, rx, ry, rz], 1 = released (only rotations allowed). */
 export interface Releases { i?: number[]; j?: number[] }
-export interface Element { id: string; type: "column" | "beam" | "brace" | "truss"; role?: string; i: string; j: string; section: string; level?: number; label?: string; roll?: number; truss?: boolean; releases?: Releases }
+export interface Element { id: string; type: "column" | "beam" | "brace" | "truss"; role?: string; i: string; j: string; section: string; level?: number; label?: string; roll?: number; truss?: boolean; releases?: Releases;
+  /** steel design settings: effective length factors, unbraced length for LTB (m), moment gradient factor */
+  design?: { Ky?: number; Kz?: number; Lb?: number; Cb?: number } }
 export interface Slab { id: string; corners: string[]; thickness: number; density?: number; material?: string; span_type?: string; level?: number; label?: string }
 export interface Wall { id: string; corners: string[]; thickness: number; density?: number; material?: string; level?: number; base_support?: string | null; label?: string }
 export interface Footing { B: number; L: number; t: number; type?: string; label?: string }
@@ -69,7 +71,7 @@ export interface Results {
   solver: { type: string; ndof: number; nnz: number; time_ms: number };
 }
 
-export type Mode = "model" | "loads" | "loadpath" | "stress" | "deformation" | "forces" | "reactions" | "stability";
+export type Mode = "model" | "loads" | "loadpath" | "stress" | "deformation" | "forces" | "reactions" | "stability" | "design";
 export type ForceComp = "N" | "Vy" | "Vz" | "T" | "My" | "Mz";
 
 export interface BucklingMode {
@@ -83,4 +85,17 @@ export interface BucklingResult { kind: "buckling"; load: string; load_name: str
 export interface PDeltaResult {
   kind: "pdelta"; load: string; load_name: string; factors: Record<string, number>; converged: boolean; iterations: number; history: number[];
   amplification: number; max_disp_linear: number; max_disp_pdelta: number; result: CaseResult; warnings: Warning[]; notes: string[]; time_ms: number;
+}
+
+export interface SteelCheck { id: string; name: string; clause: string; demand: number; capacity: number; unit: "force" | "moment" | "ratio"; ratio: number; combo: string; x: number; detail: Record<string, number | string> }
+export interface SteelMember {
+  id: string; section: string; material: string; status: "ok" | "fail" | "not_covered" | "skipped"; util: number | null;
+  reason?: string; governing?: SteelCheck | null; checks?: SteelCheck[]; notes?: string[];
+  params?: { L: number; Ky: number; Kz: number; Lb: number; Cb: number | null; fy: number };
+  props?: Record<string, number | string | null>;
+}
+export interface SteelDesignResult {
+  code: "AISC360" | "EC3" | "EIT"; code_name: string; combinations: string[]; members: Record<string, SteelMember>;
+  summary: { ok: number; fail: number; not_covered: number; skipped: number; max_util: number | null; n_checked: number };
+  notes: string[];
 }

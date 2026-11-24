@@ -102,4 +102,17 @@ The integrated values at end j are checked against the FE nodal solution (`end_c
 | Load combinations (Thai, EN 1990, ASCE 7) | Presets of the factors only; editable; verify against the edition in force |
 | Thai live loads (Ministerial Regulation 6) | Presets for convenience; verify for the project |
 | Stress ratio | vs. user-defined limit, **not** a design check |
-| Design utilisation | Not implemented — no safety/compliance claim |
+| Steel member utilisation (AISC 360-16 LRFD, EN 1993-1-1, Thai EIT via AISC) | Calculated for the listed clauses only (verified against hand calculations); members outside them are reported **not covered** |
+| Effective length factors K, unbraced length, Cb / C1 | **Assumed** K = 1.0 and unbraced length = member length unless set per member; Cb / C1 from the moment diagram |
+| Hollow-section buckling curve (EN 1993) | **Assumed** cold-formed (curve c) unless the section says `fab: "hot"` |
+| Connections, net section, web crippling, open-section torsion, seismic detailing | **Not** checked |
+| RC design | Not implemented yet |
+
+## Steel design (`structural/steel_design.py`)
+* Design forces: linear superposition of the load-case results for each ultimate combination (combinations whose id
+  or name contains SLS, SERV, service or characteristic are skipped). First-order forces.
+* Axes: y = major (My, Vz), z = minor (Mz, Vy). Compression N < 0.
+* Section properties for design ignore fillet and corner radii; flat widths of hollow sections are b − 3t.
+* EN 1993 class: the worst class over all stations and combinations, ignoring actions below 1 % of the resistance.
+* Member checks use the largest moments along the member with C_m from Table B.3 (linear moment: 0.6 + 0.4ψ ≥ 0.4;
+  span moment governing: 1.0, conservative). Cross-section checks are made at every station.

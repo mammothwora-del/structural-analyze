@@ -175,9 +175,35 @@ Open the **Stability** mode (key `8`, or *Analyze → Stability*), pick a load c
 - Limits: elastic, perfect geometry (no imperfections, residual stresses or yielding). Slabs and walls add
   stiffness but no geometric stiffness, so plate buckling is not included. These results are not a design check.
 
+## Steel member design
+
+Open **Steel Design** (key `9`, or *Analyze → Steel member design*), choose the code and press *Check steel members*.
+Every steel member is checked for all ultimate combinations of the model (service combinations are skipped).
+Members are coloured by utilisation; click one for every check with its clause, demand, capacity, governing
+combination and location, and to set its design values (K about each axis, unbraced length for LTB, Cb / C1).
+
+- **AISC 360-16 (LRFD)**: tension D2 (gross yielding); compression E3 / E4 (flexural and torsional buckling) with
+  slender elements by E7; flexure F2, F3, F6 (I), F7 (box, incl. slender flanges), F8 (round HSS), F11 (solid);
+  shear G2, G4, G5, G6; torsion of HSS H3; interaction H1-1 at every station. Cb from the moment diagram.
+- **EN 1993-1-1**: section class (Table 5.2) at every station; class 4 by the effective area of EN 1993-1-5 4.4;
+  tension, compression, bending, shear with the 6.2.8 reduction, bending + axial 6.2.9; flexural and torsional
+  buckling 6.3.1 (curves from Table 6.2); lateral-torsional buckling 6.3.2.2 (M_cr with C1 from the moment diagram);
+  member interaction 6.3.3 with the Annex B factors. gamma_M0 = gamma_M1 = 1.0 (recommended values).
+- **Thai EIT**: the AISC 360-16 LRFD equations with TIS steel grades (SS400, SM520) and the model's Thai combinations.
+  The app says so; confirm against the EIT steel standard edition in force.
+- A member outside the implemented clauses (for example a class 4 tube, a slender I-section web in AISC, steel above
+  S460) is shown as **not covered**, with the reason, instead of being given a number.
+- Not checked: connections and net-section rupture, web crippling under point loads, torsion of open sections,
+  seismic detailing, and second-order effects (use the Stability mode). Default K = 1.0 (braced member) is labelled
+  as an assumption on every member.
+- **Verification** (`tests/test_steel_design.py`, 22 tests): EN 1993 buckling curve values at unit slenderness
+  (0.6656 / 0.5970 / 0.5399 / 0.4671); hand calculations of a braced compact beam (plastic moment, web shear), an
+  unbraced beam in the inelastic and elastic LTB ranges with Cb = 1.136 for uniform load, a pinned column (AISC E3,
+  EN 1993 curve b), a tension member, a class 4 box with its effective area. 146 tests in total.
+
 ## Not yet included (planned)
 
-- Steel member design checks (AISC 360, EN 1993, Thai EIT) and RC rebar design (Thai EIT strength design): in progress.
+- RC beam and column rebar design (Thai EIT strength design): in progress.
 - PDF calculation reports, project files, DXF import: in progress.
 - Tension-only bracing, rigid diaphragms, spring supports, openings in walls and slabs.
 - Copy/move/rotate tools, snapping, IFC import, OBJ/GLTF export, database storage.
