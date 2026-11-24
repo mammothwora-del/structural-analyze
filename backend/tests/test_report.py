@@ -106,3 +106,41 @@ def test_api_report_and_dxf():
     bad = c.post("/api/import/dxf", json={"dxf": "garbage\x00\nfile\n"})
     assert bad.status_code == 400 and "DXF" in bad.json()["detail"]
     assert c.post("/api/import/dxf", json={}).status_code == 400
+
+
+def test_thai_report(warehouse):
+    from structural.report_i18n import check_name_th, thai_date
+    import datetime as dt
+    pdf = build_report(warehouse, {"stability": True}, lang="th", project={"engineer": "นายสมชาย ใจดี"})
+    assert pdf.startswith(b"%PDF")
+    reader = pypdf.PdfReader(io.BytesIO(pdf))
+    fonts = {str(f) for p in reader.pages for f in (p["/Resources"].get("/Font") or {}).values()
+             for f in [f.get_object().get("/BaseFont")]}
+    assert any("Sarabun" in f for f in fonts)                      # the bundled Thai font is embedded
+    txt = text_of(pdf)
+    for s in ("โครงการ", "วิศวกร", "นายสมชาย", "องค์อาคาร", "ไม่ใช่การรับรองว่าโครงสร้างปลอดภัย", "alpha_cr", "หน้า 1"):
+        assert s in txt, s
+    # the numbers are the same calculation as the English report
+    s = steel_design(warehouse)
+    assert f"{s['summary']['max_util']:.2f}" in txt
+    worst = max((m for m in s["members"].values() if m.get("util") is not None), key=lambda m: m["util"])
+    assert f"{worst['util']:.3f}" in txt
+    assert check_name_th("Shear (ties, 2 legs)") == "แรงเฉือน (เหล็กปลอกเสา 2 ขา)"
+    assert check_name_th("Major-axis bending (lateral-torsional buckling)") == "โมเมนต์ดัดรอบแกนหลัก (การโก่งเดาะทางข้าง)"
+    assert check_name_th("Some new check") == "Some new check"
+    from structural.report_i18n import rebar_th
+    assert rebar_th("RB9 @ 0.150 m, 2 legs (closed)") == "RB9 @ 0.150 m, 2 ขา (ปลอกปิด)"
+    assert thai_date(dt.datetime(2026, 11, 24, 22, 21)) == "24 พฤศจิกายน 2569, 22:21"
+
+
+def test_report_language_errors_and_api():
+    from structural.report import ReportError
+    m = generate_truss2d()
+    with pytest.raises(ReportError, match="language"):
+        build_report(m, lang="fr")
+    c = TestClient(app)
+    r = c.post("/api/report", json={"model": m, "lang": "th"})
+    assert r.status_code == 200 and "-report-th.pdf" in r.headers["content-disposition"]
+    assert c.post("/api/report", json={"model": m, "lang": "xx"}).status_code == 422
+    # English output is unchanged by a Thai report made before it
+    assert "Calculation report" in text_of(c.post("/api/report", json={"model": m}).content)

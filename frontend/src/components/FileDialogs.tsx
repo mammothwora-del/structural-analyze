@@ -118,7 +118,7 @@ function ReportDialog({ onDone }: { onDone: () => void }) {
   const model = s.model!;
   const [inc, setInc] = useState<Record<string, boolean>>(Object.fromEntries(PARTS.map(([k, , v]) => [k, v])));
   const [title, setTitle] = useState(model.name);
-  const [info, setInfo] = useState(s.reportInfo);
+  const [info, setInfo] = useState({ ...s.reportInfo, lang: s.reportInfo.lang ?? (model.settings.standard === "TH" ? "th" as const : "en" as const) });
   const [image, setImage] = useState(s.view === "3d");
   const ulsCombos = model.combinations.filter((c) => !/sls|serv|characteristic|ths/i.test(`${c.id} ${c.name}`));
   const [stabLoad, setStabLoad] = useState(ulsCombos[0]?.id ?? model.load_cases[0]?.id ?? "");
@@ -131,9 +131,9 @@ function ReportDialog({ onDone }: { onDone: () => void }) {
       const canvas = image ? document.querySelector<HTMLCanvasElement>("main canvas") : null;
       const pdf = await api.report({
         model, include: inc, steel_code: s.steelCode || undefined, rc_options: s.rcOptions, stability_load: stabLoad || undefined,
-        image: canvas ? canvas.toDataURL("image/png") : undefined, project: { title, project: info.project, engineer: info.engineer },
+        image: canvas ? canvas.toDataURL("image/png") : undefined, project: { title, project: info.project, engineer: info.engineer }, lang: info.lang,
       });
-      download(`${safeName(title)}-report.pdf`, pdf);
+      download(`${safeName(title)}-report${info.lang === "th" ? "-th" : ""}.pdf`, pdf);
       s.set({ log: [...useStore.getState().log, `PDF calculation report created (${(pdf.size / 1024).toFixed(0)} kB). The server re-ran the analysis${inc.steel || inc.rc ? " and the designs" : ""} for it.`] });
       onDone();
     } catch (e) {
@@ -149,6 +149,17 @@ function ReportDialog({ onDone }: { onDone: () => void }) {
         <div className="col-span-2"><Field label="Report title"><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} /></Field></div>
         <Field label="Project"><input className="input" value={info.project} placeholder={model.name} onChange={(e) => setInfo({ ...info, project: e.target.value })} /></Field>
         <Field label="Engineer"><input className="input" value={info.engineer} onChange={(e) => setInfo({ ...info, engineer: e.target.value })} /></Field>
+        <div className="col-span-2">
+          <Field label="Language">
+            <div className="flex rounded border border-ink-700 overflow-hidden">
+              {([["en", "English"], ["th", "ภาษาไทย (Thai)"]] as const).map(([k, l]) => (
+                <button key={k} type="button" onClick={() => setInfo({ ...info, lang: k })}
+                  className={`flex-1 py-1 ${info.lang === k ? "bg-accent text-ink-950 font-semibold" : "text-ink-300 hover:bg-ink-800"}`}>{l}</button>
+              ))}
+            </div>
+          </Field>
+          {info.lang === "th" && <div className="mt-1 text-ink-500">Headings, tables and check names in Thai (Sarabun font). Numbers, clause numbers and the design notes stay as calculated, in English.</div>}
+        </div>
       </div>
       <div className="panel-title mb-1">Contents</div>
       <div className="space-y-1 mb-2">

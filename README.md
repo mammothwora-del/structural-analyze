@@ -238,9 +238,12 @@ follows ACI 318-95 strength design; the equations use kgf, cm and ksc as in Thai
   reactions, extreme internal forces per load, a member force envelope, optional elastic buckling factors, steel and
   RC design tables with the check details of the most utilised members, the notes and the limitations. Every section is
   labelled INPUT, ASSUMED or CALCULATED, and the report says that it is not a statement that the structure is safe.
-  A picture of the 3D view can be added (marked as an illustration).
+  A picture of the 3D view can be added (marked as an illustration). Choose **English or Thai** in the dialog: the Thai
+  report uses the bundled Sarabun font (SIL Open Font License, `backend/structural/fonts/`) with HarfBuzz text shaping
+  (`uharfbuzz`) so tone marks sit correctly; headings, tables, check names and the limitations are in Thai, while
+  numbers, clause numbers and the design modules' notes stay as calculated, in English. Dates use the Buddhist era.
 - **Verification**: `tests/test_dxf_import.py` (units, merging, T-junctions, 3D crossings, brace releases, errors) and
-  `tests/test_report.py` (the utilisations and reactions printed match the calculation, the API endpoints). 170 tests.
+  `tests/test_report.py` (the utilisations and reactions printed match the calculation in English and Thai, the API endpoints). 172 tests.
 
 ## Not yet included (planned)
 - Tension-only bracing, rigid diaphragms, spring supports, openings in walls and slabs.
