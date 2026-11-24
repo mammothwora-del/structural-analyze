@@ -1,18 +1,10 @@
 import { useRef, useState } from "react";
 import { combinedResult } from "../lib/combine";
-import type { Model } from "../lib/types";
+import { download } from "../lib/download";
+import { safeName } from "../lib/project";
 import { useStore } from "../store";
 import { MODES } from "./Viewport";
 import { SYSTEM_LABEL, type UnitSystem } from "../lib/units";
-
-function download(name: string, data: string | Blob, type = "application/json") {
-  const blob = typeof data === "string" ? new Blob([data], { type }) : data;
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-}
 
 function exportCsv() {
   const { model, results, loadSel } = useStore.getState();
@@ -37,8 +29,9 @@ export function TopBar() {
   const menus: Record<string, [string, () => void, boolean?][]> = {
     File: [
       ["New building (default)", () => s.generate({})],
-      ["Open model (.json)…", () => file.current?.click()],
-      ["Save model (.json)", () => model && download(`${model.name.replace(/\s+/g, "_")}.json`, JSON.stringify(model, null, 1)), !model],
+      ["Open project or model (.sproj, .json)…", () => file.current?.click()],
+      ["Save project (.sproj)  Ctrl+S", () => s.saveProject(), !model],
+      ["Import DXF wireframe…", () => set({ dialog: "dxf" })],
     ],
     Edit: [
       ["Undo  (Ctrl+Z)", () => s.undo(), !s.history.length],
@@ -60,9 +53,10 @@ export function TopBar() {
     Results: [...MODES.filter((m) => m.needs).map((m) => [m.label, () => set({ mode: m.id, view: "3d" }), !results] as [string, () => void, boolean]),
       ["Dashboard", () => set({ view: "dashboard" }), !results], ["Reactions table", () => set({ bottomTab: "reactions" }), !results], ["Member results table", () => set({ bottomTab: "members" }), !results]],
     Export: [
+      ["PDF calculation report…", () => set({ dialog: "report" }), !model],
       ["Results (.csv)", exportCsv, !results],
       ["Viewport image (.png)", () => { const c = document.querySelector("canvas"); if (c) c.toBlob((b) => b && download("viewport.png", b)); }],
-      ["Model (.json)", () => model && download("model.json", JSON.stringify(model, null, 1)), !model],
+      ["Model only (.json)", () => model && download(`${safeName(model.name)}.json`, JSON.stringify(model, null, 1)), !model],
     ],
   };
   const options = model ? [...model.load_cases.map((c) => ({ id: c.id, label: `${c.id} – ${c.name}`, grp: "Load cases" })), ...model.combinations.map((c) => ({ id: c.id, label: `${c.id} – ${c.name}`, grp: "Combinations" })),
@@ -85,10 +79,10 @@ export function TopBar() {
           )}
         </div>
       ))}
-      <input ref={file} type="file" accept=".json" className="hidden" onChange={async (e) => {
+      <input ref={file} type="file" accept=".sproj,.json" className="hidden" onChange={async (e) => {
         const f = e.target.files?.[0];
         if (!f) return;
-        try { s.setModel(JSON.parse(await f.text()) as Model); } catch (err) { set({ error: `Could not read model: ${err}` }); }
+        s.openProject(await f.text(), f.name);
         e.target.value = "";
       }} />
       <div className="flex-1" />

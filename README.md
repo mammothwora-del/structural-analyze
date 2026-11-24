@@ -221,8 +221,28 @@ follows ACI 318-95 strength design; the equations use kgf, cm and ksc as in Thai
   singly reinforced section, a strain-compatibility point worked by hand, the column axial limit and phi, the
   moment magnifier, and a simply supported beam (bars, stirrup spacing, phi Vn) worked by hand. 155 tests in total.
 
+## Reports, project files and DXF import
+
+- **Project files** (*File → Save project*, `Ctrl+S`): a `.sproj` file holds the model and your settings (display units,
+  steel code, RC bar grades and cover, report engineer / project). Results are not stored: run the analysis again after
+  *File → Open project*, which also opens a plain model `.json`.
+- **DXF import** (*File → Import DXF wireframe*): reads LINE, LWPOLYLINE and POLYLINE entities of an ASCII DXF drawn in
+  3D (or as an X-Z elevation) with Z up. Units from the file header or chosen by you; end points closer than the merge
+  tolerance become one node; a member is split where another member ends on it, and (optionally) where two members
+  truly intersect in 3D. Layer names with COL / BEAM / BRAC / TRUSS set the member type, otherwise the direction does.
+  Sections, supports (at the lowest nodes) and the self-weight load case are **defaults** and are labelled as such:
+  replace them with the project values. Blocks, arcs, text and binary DXF / DWG are not imported, and the import says
+  what it skipped. Members not connected to a supported part are listed.
+- **PDF calculation report** (*Export → PDF calculation report*): the server re-runs the analysis and the chosen
+  designs from the current model and writes a PDF: model data, loads and combinations, solver log, equilibrium check,
+  reactions, extreme internal forces per load, a member force envelope, optional elastic buckling factors, steel and
+  RC design tables with the check details of the most utilised members, the notes and the limitations. Every section is
+  labelled INPUT, ASSUMED or CALCULATED, and the report says that it is not a statement that the structure is safe.
+  A picture of the 3D view can be added (marked as an illustration).
+- **Verification**: `tests/test_dxf_import.py` (units, merging, T-junctions, 3D crossings, brace releases, errors) and
+  `tests/test_report.py` (the utilisations and reactions printed match the calculation, the API endpoints). 170 tests.
+
 ## Not yet included (planned)
-- PDF calculation reports, project files, DXF import: in progress.
 - Tension-only bracing, rigid diaphragms, spring supports, openings in walls and slabs.
 - Copy/move/rotate tools, snapping, IFC import, OBJ/GLTF export, database storage.
 
@@ -230,6 +250,7 @@ follows ACI 318-95 strength design; the equations use kgf, cm and ksc as in Thai
 
 ```
 backend/structural/   solver.py (FEM) · shell.py (MITC4 shell) · mesh.py (slab/wall meshing) · slabs.py (tributary) · generator.py · analysis.py · api.py
+                      stability.py · steel_design.py · rc_design.py · dxf_import.py · report.py (PDF)
 backend/tests/        benchmark + integration tests
 frontend/src/         React + TypeScript + React Three Fiber
   lib/loadpath.ts     load path from element forces (flows, transfers, tracing)

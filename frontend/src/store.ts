@@ -4,6 +4,8 @@ import type { PathDir, TraceResult } from "./lib/loadpath";
 import type { ShellComp } from "./lib/shells";
 import type { BucklingResult, ForceComp, Load, Mode, Model, PDeltaResult, RcDesignResult, Results, SteelDesignResult } from "./lib/types";
 import { U, type UnitSystem } from "./lib/units";
+import { download } from "./lib/download";
+import { projectFile, readProjectFile, safeName } from "./lib/project";
 
 export type Selection = { kind: "element" | "node" | "slab" | "wall"; id: string } | null;
 
@@ -52,6 +54,8 @@ interface State {
   rcOptions: { main_grade: string; tie_grade: string; cover: number };
   rcBusy: boolean;
   rcError: string | null;
+  dialog: null | "dxf" | "report";
+  reportInfo: { engineer: string; project: string };
   set: (p: Partial<State>) => void;
   setModel: (m: Model, keepResults?: boolean) => void;
   editModel: (fn: (m: Model) => void) => void;
@@ -63,6 +67,8 @@ interface State {
   runPDelta: () => Promise<void>;
   runSteel: () => Promise<void>;
   runRc: () => Promise<void>;
+  saveProject: () => void;
+  openProject: (text: string, fileName: string) => void;
 }
 
 /** Id under which a P-Delta result is added to the result cases (selectable like a load case). */
@@ -79,7 +85,7 @@ export const useStore = create<State>((set, get) => ({
   forceComp: "My", shellComp: "vm", deformScale: 50, animate: true, showLabels: false, showSlabs: true,
   hiddenTypes: {}, maxLevel: null, exploded: 0, ortho: false, pathDir: "auto", trace: null, isolated: null,
   bottomTab: "log", log: [], history: [], buckling: null, pdelta: null, bucklingMode: 0, stabBusy: false, stabError: null, steel: null, steelCode: "", steelBusy: false, steelError: null,
-  designTab: "steel", rc: null, rcOptions: { main_grade: "SD40", tie_grade: "SR24", cover: 0.04 }, rcBusy: false, rcError: null, colorTransform: "sqrt", units: (() => { try { return (localStorage.getItem("units") as UnitSystem) || "SI"; } catch { return "SI"; } })(),
+  designTab: "steel", rc: null, rcOptions: { main_grade: "SD40", tie_grade: "SR24", cover: 0.04 }, rcBusy: false, rcError: null, dialog: null, reportInfo: { engineer: "", project: "" }, colorTransform: "sqrt", units: (() => { try { return (localStorage.getItem("units") as UnitSystem) || "SI"; } catch { return "SI"; } })(),
   set: (p) => set(p),
   setModel: (m, keepResults = false) => set({ ...NO_STAB, model: m, results: keepResults ? get().results : null, resultsStale: false, trace: null, selection: null }),
   editModel: (fn) => {
@@ -171,6 +177,29 @@ export const useStore = create<State>((set, get) => ({
       set({ rcError: msg, log: [...get().log, `[ERROR] RC design failed: ${msg}`] });
     } finally {
       set({ rcBusy: false });
+    }
+  },
+  saveProject: () => {
+    const { model, units, steelCode, rcOptions, reportInfo, log } = get();
+    if (!model) return;
+    const name = `${safeName(model.name)}.sproj`;
+    download(name, projectFile(model, { units, steelCode, rcOptions, report: reportInfo }));
+    set({ log: [...log, `Project saved as ${name} (model and settings; results are recalculated after opening).`] });
+  },
+  openProject: (text, fileName) => {
+    try {
+      const { model, settings, savedAt } = readProjectFile(text);
+      get().setModel(model);
+      set({
+        history: [], isolated: null, maxLevel: null, mode: "model", view: "3d", loadSel: model.load_cases[0]?.id ?? "DL", error: null,
+        ...(settings.units ? { units: settings.units } : {}),
+        ...(settings.steelCode != null ? { steelCode: settings.steelCode } : {}),
+        ...(settings.rcOptions ? { rcOptions: settings.rcOptions } : {}),
+        reportInfo: { engineer: settings.report?.engineer ?? "", project: settings.report?.project ?? "" },
+        log: [...get().log, `Opened ${fileName}: "${model.name}", ${model.elements.length} members, ${model.nodes.length} nodes${savedAt ? ` (saved ${new Date(savedAt).toLocaleString()})` : ""}. Run the analysis to calculate results.`],
+      });
+    } catch (e) {
+      set({ error: `Could not open ${fileName}: ${(e as Error).message}` });
     }
   },
   runPDelta: async () => {

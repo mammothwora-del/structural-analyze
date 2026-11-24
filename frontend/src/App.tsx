@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { BottomPanel } from "./components/BottomPanel";
+import { FileDialogs } from "./components/FileDialogs";
 import { Dashboard } from "./components/Dashboard";
 import { Inspector } from "./components/Inspector";
 import { LeftSidebar } from "./components/LeftSidebar";
@@ -16,6 +17,8 @@ export default function App() {
       if (ok && !useStore.getState().model && !useStore.getState().busy) useStore.getState().generate({});
     });
     const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); useStore.getState().saveProject(); return; }
+      if (useStore.getState().dialog) return;
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
       const st = useStore.getState();
@@ -49,6 +52,7 @@ export default function App() {
         </main>
         <Inspector />
       </div>
+      <FileDialogs />
     </div>
   );
 }

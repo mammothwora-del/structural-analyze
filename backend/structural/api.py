@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .analysis import _r, analyze
@@ -97,6 +97,41 @@ def run_rc_design(req: dict):
         raise HTTPException(422, str(exc)) from exc
     except (KeyError, ValueError, IndexError, TypeError) as exc:
         raise HTTPException(400, f"Invalid request: {exc!r}") from exc
+
+
+@app.post("/api/import/dxf")
+def import_dxf_file(req: dict):
+    """{"dxf": text of an ASCII DXF file, "options": {"units": "auto", "material": "steel", "support": "fixed", ...}}"""
+    from .dxf_import import DXFError, import_dxf
+    text = req.get("dxf")
+    if not isinstance(text, str):
+        raise HTTPException(400, "Send the DXF file as text in the field 'dxf'")
+    if len(text) > 50_000_000:
+        raise HTTPException(413, "DXF file larger than 50 MB")
+    try:
+        return import_dxf(text, req.get("options") or {})
+    except DXFError as exc:
+        raise HTTPException(400, f"Could not import the DXF file: {exc}") from exc
+    except (KeyError, ValueError, IndexError, TypeError) as exc:
+        raise HTTPException(400, f"Could not import the DXF file: {exc!r}") from exc
+
+
+@app.post("/api/report")
+def make_report(req: dict):
+    """{"model": {...}, "include": {...}, "steel_code": "", "rc_options": {...}, "image": base64 PNG, "project": {...}}
+
+    Re-runs the analysis and the designs on the server and returns a PDF."""
+    from .report import ReportError, build_report
+    try:
+        pdf = build_report(req["model"], req.get("include"), req.get("steel_code") or None, req.get("rc_options"),
+                           req.get("image"), req.get("stability_load") or None, req.get("project"))
+    except (ModelError, ReportError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except (KeyError, ValueError, IndexError, TypeError) as exc:
+        raise HTTPException(400, f"Invalid request: {exc!r}") from exc
+    name = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in (req["model"].get("name") or "model"))[:60]
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{name}-report.pdf"'})
 
 
 # Serve the built frontend (frontend/dist) when present.

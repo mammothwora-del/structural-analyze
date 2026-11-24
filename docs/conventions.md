@@ -118,3 +118,18 @@ The integrated values at end j are checked against the FE nodal solution (`end_c
 * EN 1993 class: the worst class over all stations and combinations, ignoring actions below 1 % of the resistance.
 * Member checks use the largest moments along the member with C_m from Table B.3 (linear moment: 0.6 + 0.4ψ ≥ 0.4;
   span moment governing: 1.0, conservative). Cross-section checks are made at every station.
+
+## Project files, DXF import and PDF report
+
+- `.sproj` = `{"format": "structural-analyze-project", "version": 1, "saved_at", "model", "settings"}`. Results are
+  never saved, so an opened project is always recalculated by the current solver. A newer file version is refused.
+- DXF (`structural/dxf_import.py`): coordinates scaled to m (`$INSUNITS` 1 in, 2 ft, 4 mm, 5 cm, 6 m; mm when absent).
+  Nodes merged on a grid of the tolerance (default 5 mm). Split at end nodes lying on a member and, unless
+  `connect_crossings` is false, at true 3D intersections (closest distance <= tolerance inside both lines). Columns are
+  oriented bottom to top. Braces are pinned (ry, rz released; rx at end i) only at the ends of the drawn line and stay
+  continuous through crossings, so an X-brace crossing node is stable. ASSUMED: default sections per type and material,
+  supports at the lowest level, load case DL with self-weight, the standard's default combinations.
+- PDF (`structural/report.py`, reportlab): everything is recomputed on the server from the model sent; the screenshot
+  is the only thing taken from the browser. Labels: INPUT (model data), ASSUMED (defaults and simplifications),
+  CALCULATED (analysis and design results). Built-in PDF fonts only, so Greek letters are spelled out (alpha_cr, rho, phi).
+  Forces in kN, moments in kN·m; combination results are linear sums of the load-case results.
