@@ -153,11 +153,34 @@ Run the solver tests: `cd backend && python -m pytest -q`
   - Equal base reactions in the domes (rotational symmetry).
   - 102 tests in total.
 
+## Stability: buckling and P-Delta
+
+Open the **Stability** mode (key `8`, or *Analyze → Stability*), pick a load case or combination in the top bar, then:
+
+- **Buckling**: elastic critical load factors α<sub>cr</sub> and animated mode shapes.
+  - Linear eigenvalue buckling: (K + α K<sub>G</sub>) φ = 0, with the axial forces from a linear analysis of the chosen load.
+  - Every member is split into 2 to 8 segments (default 4), so single members can buckle between their joints.
+  - α<sub>cr</sub> below 10 is flagged (EN 1993-1-1 §5.2.1 then asks for second-order analysis).
+- **P-Delta**: second-order analysis of the chosen load, iterating (K + K<sub>G</sub>(N)) u = F until the axial
+  forces converge.
+  - Shows the linear vs second-order maximum displacement and the amplification.
+  - The result is added to the Load list as `PD:<load>`, so forces, deformation, stress, reactions and tables can
+    all show the second-order values.
+  - A load above the buckling load is refused (the tangent stiffness is no longer positive definite).
+- **Verification** (`tests/test_stability.py`, 22 tests):
+  - Euler columns (cantilever, pinned, fixed-pinned, fixed-guided) within 0.1 to 0.2 %, including convergence from above.
+  - Pin-ended truss column, sway portal with a rigid beam (K = 2).
+  - P-Delta cantilever against the exact beam-column formula within 0.01 %; base moment = HL + PΔ.
+  - Every generator runs both analyses. 124 tests in total.
+- Limits: elastic, perfect geometry (no imperfections, residual stresses or yielding). Slabs and walls add
+  stiffness but no geometric stiffness, so plate buckling is not included. These results are not a design check.
+
 ## Not yet included (planned)
 
-- Tension-only bracing, member buckling, rigid diaphragms, spring supports, openings in walls and slabs.
-- Copy/move/rotate tools, snapping, DXF/IFC import, OBJ/GLTF export, PDF reports.
-- Buckling, design code checks (no utilisation ratios or compliance claims are made), database storage.
+- Steel member design checks (AISC 360, EN 1993, Thai EIT) and RC rebar design (Thai EIT strength design): in progress.
+- PDF calculation reports, project files, DXF import: in progress.
+- Tension-only bracing, rigid diaphragms, spring supports, openings in walls and slabs.
+- Copy/move/rotate tools, snapping, IFC import, OBJ/GLTF export, database storage.
 
 ## Layout
 

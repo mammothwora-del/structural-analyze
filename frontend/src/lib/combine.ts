@@ -2,6 +2,7 @@ import type { CaseResult, Model, Results, Stations } from "./types";
 
 /** Load selection: a load case id or a combination id. */
 export function factorsFor(model: Model, sel: string): Record<string, number> {
+  if (sel.startsWith("PD:")) sel = sel.slice(3);   // a P-Delta result carries the loads of its case/combination
   const combo = model.combinations.find((c) => c.id === sel);
   if (combo) return combo.factors;
   return { [sel]: 1 };
