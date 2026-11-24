@@ -456,7 +456,7 @@ def generate_warehouse(params: dict | None = None) -> dict:
     m = b.model(f"Warehouse {ns * span:g} × {nb * bay:g} m ({label})", p, sections, cases, grid)
     m["notes"] = ["Roof sheeting assumed to span one way between purlins (tributary width per purlin).",
                   "Purlins and eave struts are simply supported between frames (pinned ends).",
-                  "Bracing is pin-ended and acts in tension and compression (no tension-only behaviour, no buckling).",
+                  "Bracing is pin-ended and acts in tension and compression (no tension-only behaviour; buckling in Stability mode).",
                   "Wind: simplified net pressure on the long wall lumped at the windward column heads; not a code calculation."]
     if portal:
         m["notes"].insert(2, "Portal frame: rafters rigidly connected to the columns and at the ridge (no haunches modelled).")
@@ -651,8 +651,8 @@ def generate_lattice_roof(params: dict | None = None) -> dict:
     m["notes"] = ["Single-layer lattice with rigid (moment) joints; members are beam elements.",
                   "Roof load lumped at the nodes by tributary plan area (cladding assumed to span between nodes).",
                   "Supported by pins along the springing line (ring beam / walls assumed rigid).",
-                  "Linear analysis only: single-layer lattice roofs are sensitive to buckling and snap-through, "
-                  "which are NOT checked. Do not use the results for design without a stability analysis.",
+                  "Single-layer lattice roofs are sensitive to buckling, snap-through and imperfections. Run the "
+                  "Stability mode for elastic buckling factors; snap-through and imperfection sensitivity are NOT checked.",
                   f"Plan area {plan:.1f} m²."]
     return m
 

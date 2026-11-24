@@ -69,5 +69,18 @@ export interface Results {
   solver: { type: string; ndof: number; nnz: number; time_ms: number };
 }
 
-export type Mode = "model" | "loads" | "loadpath" | "stress" | "deformation" | "forces" | "reactions";
+export type Mode = "model" | "loads" | "loadpath" | "stress" | "deformation" | "forces" | "reactions" | "stability";
 export type ForceComp = "N" | "Vy" | "Vz" | "T" | "My" | "Mz";
+
+export interface BucklingMode {
+  factor: number;
+  /** normalised mode displacement (max translation = 1) per node */
+  nodes: Record<string, number[]>;
+  /** per member, points from end i to end j: [x, y, z, ux, uy, uz] */
+  members: Record<string, number[][]>;
+}
+export interface BucklingResult { kind: "buckling"; load: string; load_name: string; factors: Record<string, number>; n_seg: number; modes: BucklingMode[]; notes: string[]; warnings: Warning[]; ndof: number; time_ms: number }
+export interface PDeltaResult {
+  kind: "pdelta"; load: string; load_name: string; factors: Record<string, number>; converged: boolean; iterations: number; history: number[];
+  amplification: number; max_disp_linear: number; max_disp_pdelta: number; result: CaseResult; warnings: Warning[]; notes: string[]; time_ms: number;
+}

@@ -55,6 +55,22 @@ def run_analysis(model: dict):
         raise HTTPException(400, f"Invalid model: {exc!r}") from exc
 
 
+@app.post("/api/stability")
+def run_stability(req: dict):
+    """{"model": {...}, "load": case or combination id, "kind": "buckling" | "pdelta", "n_modes": 4, "n_seg": 4}"""
+    from .analysis import _r
+    from .stability import buckling, pdelta
+    try:
+        model, load = req["model"], req["load"]
+        if req.get("kind", "buckling") == "pdelta":
+            return pdelta(model, load, n_seg=int(req.get("n_seg", 2)))
+        return _r(buckling(model, load, n_modes=int(req.get("n_modes", 4)), n_seg=int(req.get("n_seg", 4))))
+    except ModelError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except (KeyError, ValueError, IndexError, TypeError) as exc:
+        raise HTTPException(400, f"Invalid request: {exc!r}") from exc
+
+
 # Serve the built frontend (frontend/dist) when present.
 _dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if _dist.exists():

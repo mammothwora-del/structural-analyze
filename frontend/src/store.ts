@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { api } from "./lib/api";
 import type { PathDir, TraceResult } from "./lib/loadpath";
 import type { ShellComp } from "./lib/shells";
-import type { ForceComp, Load, Mode, Model, Results } from "./lib/types";
+import type { BucklingResult, ForceComp, Load, Mode, Model, PDeltaResult, Results } from "./lib/types";
 import { U, type UnitSystem } from "./lib/units";
 
 export type Selection = { kind: "element" | "node" | "slab" | "wall"; id: string } | null;
@@ -37,6 +37,12 @@ interface State {
   units: UnitSystem;
   log: string[];
   history: Model[];
+  /** stability results, cleared whenever the model changes */
+  buckling: BucklingResult | null;
+  pdelta: PDeltaResult | null;
+  bucklingMode: number;
+  stabBusy: boolean;
+  stabError: string | null;
   set: (p: Partial<State>) => void;
   setModel: (m: Model, keepResults?: boolean) => void;
   editModel: (fn: (m: Model) => void) => void;
@@ -44,7 +50,15 @@ interface State {
   generate: (params: Record<string, unknown>) => Promise<void>;
   analyze: () => Promise<void>;
   addLoad: (l: Load) => void;
+  runBuckling: (nSeg: number, nModes: number) => Promise<void>;
+  runPDelta: () => Promise<void>;
 }
+
+/** Id under which a P-Delta result is added to the result cases (selectable like a load case). */
+export const pdeltaId = (load: string) => `PD:${load}`;
+/** The load case or combination behind a selection (a P-Delta result id maps back to its load). */
+export const baseLoad = (sel: string) => (sel.startsWith("PD:") ? sel.slice(3) : sel);
+const NO_STAB = { buckling: null, pdelta: null, stabError: null };
 
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
 
@@ -53,26 +67,26 @@ export const useStore = create<State>((set, get) => ({
   mode: "model", view: "3d", loadSel: "DL", selection: null, multi: [],
   forceComp: "My", shellComp: "vm", deformScale: 50, animate: true, showLabels: false, showSlabs: true,
   hiddenTypes: {}, maxLevel: null, exploded: 0, ortho: false, pathDir: "auto", trace: null, isolated: null,
-  bottomTab: "log", log: [], history: [], colorTransform: "sqrt", units: (() => { try { return (localStorage.getItem("units") as UnitSystem) || "SI"; } catch { return "SI"; } })(),
+  bottomTab: "log", log: [], history: [], buckling: null, pdelta: null, bucklingMode: 0, stabBusy: false, stabError: null, colorTransform: "sqrt", units: (() => { try { return (localStorage.getItem("units") as UnitSystem) || "SI"; } catch { return "SI"; } })(),
   set: (p) => set(p),
-  setModel: (m, keepResults = false) => set({ model: m, results: keepResults ? get().results : null, resultsStale: false, trace: null, selection: null }),
+  setModel: (m, keepResults = false) => set({ ...NO_STAB, model: m, results: keepResults ? get().results : null, resultsStale: false, trace: null, selection: null }),
   editModel: (fn) => {
     const m = get().model;
     if (!m) return;
     const next = clone(m);
     fn(next);
-    set({ model: next, history: [...get().history.slice(-30), m], resultsStale: !!get().results, trace: null });
+    set({ ...NO_STAB, model: next, history: [...get().history.slice(-30), m], resultsStale: !!get().results, trace: null });
   },
   undo: () => {
     const h = get().history;
     if (!h.length) return;
-    set({ model: h[h.length - 1], history: h.slice(0, -1), resultsStale: !!get().results });
+    set({ ...NO_STAB, model: h[h.length - 1], history: h.slice(0, -1), resultsStale: !!get().results });
   },
   generate: async (params) => {
     set({ busy: true, error: null });
     try {
       const m = await api.generate(params);
-      set({ model: m, results: null, resultsStale: false, selection: null, trace: null, isolated: null, mode: "model", history: [],
+      set({ ...NO_STAB, model: m, results: null, resultsStale: false, selection: null, trace: null, isolated: null, mode: "model", history: [],
         log: [...get().log, `New model "${m.name}": ${m.elements.length} members${m.slabs.length ? `, ${m.slabs.length} slab panels` : ""}${m.walls?.length ? `, ${m.walls.length} walls` : ""}, ${m.supports.length} supports.`] });
     } catch (e) {
       set({ error: String((e as Error).message) });
@@ -86,8 +100,9 @@ export const useStore = create<State>((set, get) => ({
     set({ busy: true, error: null });
     try {
       const r = await api.analyze(m);
-      const loadSel = r.cases[get().loadSel] || m.combinations.some((c) => c.id === get().loadSel) ? get().loadSel : m.load_cases[0]?.id;
-      set({ results: r, resultsStale: false, loadSel, trace: null, log: [...get().log, "— Analysis —", ...r.log, ...r.warnings.map((w) => `[${w.level.toUpperCase()}] ${w.case ? w.case + ": " : ""}${w.message}`)],
+      const want = baseLoad(get().loadSel);
+      const loadSel = r.cases[want] || m.combinations.some((c) => c.id === want) ? want : m.load_cases[0]?.id;
+      set({ results: r, resultsStale: false, loadSel, trace: null, pdelta: null, log: [...get().log, "— Analysis —", ...r.log, ...r.warnings.map((w) => `[${w.level.toUpperCase()}] ${w.case ? w.case + ": " : ""}${w.message}`)],
         mode: get().mode === "model" || get().mode === "loads" ? "loadpath" : get().mode, bottomTab: r.warnings.length ? "warnings" : get().bottomTab });
     } catch (e) {
       const msg = String((e as Error).message);
@@ -97,6 +112,43 @@ export const useStore = create<State>((set, get) => ({
     }
   },
   addLoad: (l) => get().editModel((m) => { m.loads.push(l); }),
+  runBuckling: async (nSeg, nModes) => {
+    const m = get().model;
+    if (!m) return;
+    const load = baseLoad(get().loadSel);
+    set({ stabBusy: true, stabError: null });
+    try {
+      const r = await api.buckling(m, load, nModes, nSeg);
+      set({ buckling: r, bucklingMode: 0, log: [...get().log, `— Buckling (${load}) —`, r.modes.length
+        ? `Elastic critical load factors: ${r.modes.map((x) => x.factor.toFixed(3)).join(", ")} (${r.ndof} DOF, ${r.time_ms.toFixed(0)} ms)`
+        : "No buckling mode found (no compression)."] });
+    } catch (e) {
+      const msg = String((e as Error).message);
+      set({ stabError: msg, log: [...get().log, `[ERROR] Buckling failed: ${msg}`] });
+    } finally {
+      set({ stabBusy: false });
+    }
+  },
+  runPDelta: async () => {
+    const m = get().model;
+    if (!m) return;
+    const load = baseLoad(get().loadSel);
+    if (!get().results || get().resultsStale) await get().analyze();
+    if (!get().results) return;
+    set({ stabBusy: true, stabError: null, mode: "stability", loadSel: load });
+    try {
+      const r = await api.pdelta(m, load);
+      const results = get().results!;
+      set({ pdelta: r, results: { ...results, cases: { ...results.cases, [pdeltaId(load)]: { ...r.result, case: pdeltaId(load) } } },
+        log: [...get().log, `— P-Delta (${load}) —`, `${r.converged ? "Converged" : "NOT converged"} in ${r.iterations} iterations; max displacement × ${r.amplification.toFixed(3)} vs linear.`,
+          ...r.warnings.filter((w) => w.level !== "info").map((w) => `[${w.level.toUpperCase()}] ${w.message}`)] });
+    } catch (e) {
+      const msg = String((e as Error).message);
+      set({ stabError: msg, log: [...get().log, `[ERROR] P-Delta failed: ${msg}`] });
+    } finally {
+      set({ stabBusy: false });
+    }
+  },
 }));
 
 /** Unit formatter bound to the selected display system. */

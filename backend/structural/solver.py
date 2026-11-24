@@ -403,6 +403,48 @@ class FrameModel:
         return sp.csc_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))),
                              shape=(self.ndof, self.ndof))
 
+    def _oblique_pin_rotations(self, scale, already):
+        """Spring matrix (global) restraining rotation directions that have no stiffness at all."""
+        cand = set()
+        for e in self.elements:
+            ri, rj = e["releases"]
+            if any(ri[3:]):
+                cand.add(e["i"])
+            if any(rj[3:]):
+                cand.add(e["j"])
+        rows, cols, vals = [], [], []
+        Kc = self.K.tocsr()
+        Kcols = self.K.tocsc()
+        nfound = 0
+        for nid in cand:
+            b = DOF * self.nidx[nid] + 3
+            r = [b + k for k in range(3) if not self.restrained[b + k] and (b + k) not in already]
+            if not r:
+                continue
+            B = Kc[r][:, r].toarray()
+            w, V = np.linalg.eigh(B)
+            for k in range(len(r)):
+                if w[k] > 1e-10 * scale:
+                    continue
+                n = V[:, k]
+                coupling = Kcols[:, r] @ n
+                if np.abs(coupling).max() > 1e-9 * scale:
+                    continue
+                blk = scale * np.outer(n, n)
+                for a in range(len(r)):
+                    for c in range(len(r)):
+                        if abs(blk[a, c]) > 1e-14 * scale:
+                            rows.append(r[a])
+                            cols.append(r[c])
+                            vals.append(blk[a, c])
+                nfound += 1
+        if nfound:
+            self.pinned_rotation_dirs = nfound
+            self.warnings.append({"level": "info", "code": "pin_joint_rotations_oblique",
+                                  "message": f"{nfound} free rotation direction(s) at pin joints without any stiffness "
+                                             f"were held by a spring (no effect on the results)."})
+        return sp.csc_matrix((vals, (rows, cols)), shape=(self.ndof, self.ndof))
+
     def _dof_label(self, g):
         return f"node {self.active_nodes[g // DOF]} {DOF_NAMES[g % DOF]}"
 
@@ -434,6 +476,29 @@ class FrameModel:
         if zero_all.size:
             Kff = Kff + sp.csc_matrix((np.where(diag <= 1e-12 * scale, scale, 0.0), (np.arange(diag.size), np.arange(diag.size))),
                                       shape=Kff.shape)
+        # Pin joints can also have a free rotation about an axis that is not a global axis (e.g. a joint where the
+        # only rotational stiffness comes from the torsion of one inclined member). Find such null directions of
+        # each node's rotational block whose whole row of K is zero, and hold them with a spring.
+        fix = self._oblique_pin_rotations(scale, set(int(self.free[z]) for z in zero_all))
+        # internal use (stability models): springs holding the free twist of subdivided pin-ended members
+        tw = self.data.get("_twist_springs", [])
+        if tw:
+            rows, cols, vals = [], [], []
+            for t in tw:
+                if t["node"] not in self.nidx:
+                    continue
+                a = np.asarray(t["axis"], dtype=float)
+                a = a / np.linalg.norm(a)
+                b = DOF * self.nidx[t["node"]] + 3
+                for p_ in range(3):
+                    for q_ in range(3):
+                        rows.append(b + p_)
+                        cols.append(b + q_)
+                        vals.append(scale * a[p_] * a[q_])
+            fix = fix + sp.csc_matrix((vals, (rows, cols)), shape=(self.ndof, self.ndof))
+        self.K_fix = fix
+        if fix.nnz:
+            Kff = Kff + fix[self.free][:, self.free]
         # Nodes in parts that are not connected to any support: restrain them so
         # the rest of the structure can still be solved (they are flagged above).
         if self.unsupported_nodes:

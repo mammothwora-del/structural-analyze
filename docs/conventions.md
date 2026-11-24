@@ -64,7 +64,21 @@ The integrated values at end j are checked against the FE nodal solution (`end_c
   member stays pin-ended. Joint rotations with zero stiffness (all connected members pinned) are fixed and reported.
 * Generated roof loads: planar and space trusses lump q × tributary length/area at the top nodes; the warehouse
   spreads q × purlin spacing as line loads on the purlins (sheeting spanning one way). All three are **assumed**.
-* Bracing is linear elastic in tension and compression. No tension-only behaviour, no buckling.
+* Bracing is linear elastic in tension and compression. No tension-only behaviour.
+
+## Buckling and P-Delta (`structural/stability.py`)
+* Geometric stiffness of a frame member with axial force N (tension positive):
+  K<sub>G</sub> = N ∫ (N<sub>v</sub>'ᵀN<sub>v</sub>' + N<sub>w</sub>'ᵀN<sub>w</sub>') dx with the cubic Hermite shape functions of the
+  elastic element, plus N (I<sub>y</sub> + I<sub>z</sub>) / (A L) on the twist DOFs. Released ends are condensed with the same
+  transformation as the elastic stiffness.
+* Members are subdivided (buckling: 4 segments by default, P-Delta: 2). End releases stay at the member ends.
+  Pin-ended members keep a small internal spring on the twist of the interior nodes (a pin-ended rod's twist carries no load).
+* Buckling: (−K<sub>G</sub>) φ = μ K φ, α<sub>cr</sub> = 1/μ for the largest μ. Mode shapes are normalised to a maximum
+  translation of 1 (dimensionless; the display scale is arbitrary).
+* P-Delta: N from the previous iteration, until max |ΔN| / max |N| < 1e-5. The number of negative pivots of
+  K + K<sub>G</sub> (Sylvester's law of inertia) detects a load above the lowest buckling load.
+* P-Delta results are for one load case or combination: second-order results do not superpose.
+* Shells (slabs, walls) contribute elastic stiffness only.
 
 ## What is calculated vs. assumed
 | Item | Status |
@@ -77,9 +91,12 @@ The integrated values at end j are checked against the FE nodal solution (`end_c
 | Roof load to truss nodes / purlins | **Assumed** tributary lumping (trusses) or one-way sheeting (warehouse) |
 | Out-of-plane restraint of planar trusses | **Assumed** lateral restraint at every node (purlins/bracing not modelled) |
 | Portal frame knees and ridge | **Assumed** rigid, no haunches modelled |
-| Lattice roofs (vault, dome) | Linear FEM with rigid joints; **buckling / snap-through NOT checked** (usually governs) |
+| Lattice roofs (vault, dome) | Linear FEM with rigid joints; linear buckling available in Stability mode; **snap-through / imperfection sensitivity NOT checked** |
 | Lattice roof supports | **Assumed** pinned along the springing line (rigid ring beam / walls) |
-| Bracing behaviour | Linear, tension and compression; **no** tension-only or buckling |
+| Bracing behaviour | Linear, tension and compression; **no** tension-only |
+| Elastic critical load factors α<sub>cr</sub>, buckling modes | Calculated (eigenvalue buckling of the perfect elastic structure; verified against Euler) |
+| P-Delta (second-order) displacements and forces | Calculated (geometric stiffness iteration; verified against the exact beam-column solution) |
+| Imperfections, residual stresses, yielding, plate/shell buckling | **Not** included in the stability analysis |
 | Footing soil pressure | **Assumed** rigid footing, linear full-contact pressure |
 | Wind / seismic loads | **Simplified** generators (net pressure / ELF with user Cs), not code calculations |
 | Load combinations (Thai, EN 1990, ASCE 7) | Presets of the factors only; editable; verify against the edition in force |

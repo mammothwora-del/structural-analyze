@@ -1,4 +1,4 @@
-import type { Model, Results } from "./types";
+import type { BucklingResult, Model, PDeltaResult, Results } from "./types";
 
 const BASE = (import.meta as unknown as { env: Record<string, string> }).env.VITE_API_URL ?? "";
 
@@ -15,5 +15,9 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 export const api = {
   generate: (params: Record<string, unknown>) => post<Model>("/api/generate", params),
   analyze: (model: Model) => post<Results>("/api/analyze", model),
+  buckling: async (model: Model, load: string, n_modes = 4, n_seg = 4) =>
+    ({ ...(await post<Omit<BucklingResult, "kind">>("/api/stability", { model, load, kind: "buckling", n_modes, n_seg })), kind: "buckling" as const }),
+  pdelta: async (model: Model, load: string, n_seg = 2) =>
+    ({ ...(await post<Omit<PDeltaResult, "kind">>("/api/stability", { model, load, kind: "pdelta", n_seg })), kind: "pdelta" as const }),
   health: async () => { try { const r = await fetch(`${BASE}/api/health`); return r.ok; } catch { return false; } },
 };

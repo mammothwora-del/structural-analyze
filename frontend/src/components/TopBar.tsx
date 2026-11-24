@@ -54,7 +54,7 @@ export function TopBar() {
       ["Load cases", () => set({ bottomTab: "cases" })],
       ["Combinations", () => set({ bottomTab: "combos" })],
     ],
-    Analyze: [["Run linear static analysis  (F5)", () => analyze(), !model]],
+    Analyze: [["Run linear static analysis  (F5)", () => analyze(), !model], ["Stability: buckling and P-Delta  (8)", () => set({ mode: "stability", view: "3d" }), !model]],
     Results: [...MODES.filter((m) => m.needs).map((m) => [m.label, () => set({ mode: m.id, view: "3d" }), !results] as [string, () => void, boolean]),
       ["Dashboard", () => set({ view: "dashboard" }), !results], ["Reactions table", () => set({ bottomTab: "reactions" }), !results], ["Member results table", () => set({ bottomTab: "members" }), !results]],
     Export: [
@@ -63,7 +63,8 @@ export function TopBar() {
       ["Model (.json)", () => model && download("model.json", JSON.stringify(model, null, 1)), !model],
     ],
   };
-  const options = model ? [...model.load_cases.map((c) => ({ id: c.id, label: `${c.id} – ${c.name}`, grp: "Load cases" })), ...model.combinations.map((c) => ({ id: c.id, label: `${c.id} – ${c.name}`, grp: "Combinations" }))] : [];
+  const options = model ? [...model.load_cases.map((c) => ({ id: c.id, label: `${c.id} – ${c.name}`, grp: "Load cases" })), ...model.combinations.map((c) => ({ id: c.id, label: `${c.id} – ${c.name}`, grp: "Combinations" })),
+    ...Object.keys(results?.cases ?? {}).filter((k) => k.startsWith("PD:")).map((k) => ({ id: k, label: `${k.slice(3)} – P-Delta (2nd order)`, grp: "P-Delta results" }))] : [];
   return (
     <header className="h-11 shrink-0 flex items-center gap-1 border-b border-ink-800 bg-ink-900 px-3" onMouseLeave={() => setOpen(null)}>
       <div className="flex items-center gap-2 mr-3">
@@ -97,7 +98,7 @@ export function TopBar() {
           </select>
           <span className="text-[11px] text-ink-400 ml-2">Load</span>
           <select className="input !w-52" value={loadSel} onChange={(e) => set({ loadSel: e.target.value, trace: null })}>
-            {["Load cases", "Combinations"].map((g) => (
+            {["Load cases", "Combinations", "P-Delta results"].filter((g) => options.some((o) => o.grp === g)).map((g) => (
               <optgroup key={g} label={g}>{options.filter((o) => o.grp === g).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}</optgroup>
             ))}
           </select>

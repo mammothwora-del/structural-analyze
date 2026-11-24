@@ -46,7 +46,7 @@ function EmptyPanel() {
     <div className="text-ink-400 text-xs leading-relaxed">
       <div className="panel-title mb-2">Properties & Results</div>
       <p>Click a member, node or slab in the 3D view to inspect it. Shift/Ctrl-click to multi-select members (or nodes, to add a member between two nodes).</p>
-      <p className="mt-2">Keyboard: <span className="num">1–7</span> switch modes, <span className="num">Del</span> deletes the selected member, <span className="num">Ctrl+Z</span> undo, <span className="num">F5</span> analyze.</p>
+      <p className="mt-2">Keyboard: <span className="num">1–8</span> switch modes, <span className="num">Del</span> deletes the selected member, <span className="num">Ctrl+Z</span> undo, <span className="num">F5</span> analyze.</p>
     </div>
   );
 }
