@@ -9,7 +9,7 @@ export interface ProjectSettings {
   units?: UnitSystem;
   steelCode?: string;
   rcOptions?: { main_grade: string; tie_grade: string; cover: number };
-  report?: { engineer?: string; project?: string };
+  report?: { engineer?: string; project?: string; lang?: "en" | "th" };
 }
 
 export interface ProjectFile {

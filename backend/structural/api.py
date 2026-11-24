@@ -118,20 +118,22 @@ def import_dxf_file(req: dict):
 
 @app.post("/api/report")
 def make_report(req: dict):
-    """{"model": {...}, "include": {...}, "steel_code": "", "rc_options": {...}, "image": base64 PNG, "project": {...}}
+    """{"model": {...}, "include": {...}, "steel_code": "", "rc_options": {...}, "image": base64 PNG, "project": {...},
+     "lang": "en" | "th"}
 
     Re-runs the analysis and the designs on the server and returns a PDF."""
     from .report import ReportError, build_report
     try:
         pdf = build_report(req["model"], req.get("include"), req.get("steel_code") or None, req.get("rc_options"),
-                           req.get("image"), req.get("stability_load") or None, req.get("project"))
+                           req.get("image"), req.get("stability_load") or None, req.get("project"),
+                           lang=req.get("lang") or "en")
     except (ModelError, ReportError) as exc:
         raise HTTPException(422, str(exc)) from exc
     except (KeyError, ValueError, IndexError, TypeError) as exc:
         raise HTTPException(400, f"Invalid request: {exc!r}") from exc
     name = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in (req["model"].get("name") or "model"))[:60]
     return Response(pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="{name}-report.pdf"'})
+                    headers={"Content-Disposition": f'attachment; filename="{name}-report{"-th" if req.get("lang") == "th" else ""}.pdf"'})
 
 
 # Serve the built frontend (frontend/dist) when present.

@@ -131,5 +131,8 @@ The integrated values at end j are checked against the FE nodal solution (`end_c
   supports at the lowest level, load case DL with self-weight, the standard's default combinations.
 - PDF (`structural/report.py`, reportlab): everything is recomputed on the server from the model sent; the screenshot
   is the only thing taken from the browser. Labels: INPUT (model data), ASSUMED (defaults and simplifications),
-  CALCULATED (analysis and design results). Built-in PDF fonts only, so Greek letters are spelled out (alpha_cr, rho, phi).
+  CALCULATED (analysis and design results). Greek letters are spelled out (alpha_cr, rho, phi): the fonts lack them.
+  `lang="th"`: text from `structural/report_i18n.py` (missing keys fall back to English), Sarabun font, shaped with
+  uharfbuzz (refused with a clear message if it is not installed). Thai words cannot be split inside a word, so table
+  columns are widened to the longest Thai header word.
   Forces in kN, moments in kN·m; combination results are linear sums of the load-case results.
