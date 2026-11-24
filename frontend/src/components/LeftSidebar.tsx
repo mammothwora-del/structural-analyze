@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Section } from "../lib/types";
 import { useStore, useU } from "../store";
 import { elementColorKey, TYPE_COLORS, TYPE_LABELS } from "../three/Members";
+import { GenPreview, TrussTypePicker } from "./GenPreview";
 
 const list = (s: string) => s.split(/[,\s]+/).filter(Boolean).map(Number).filter((x) => x > 0);
 
@@ -104,15 +105,15 @@ function TrussGen() {
   const { p, setP, num, u } = useSI({ truss_type: "pratt", span: 18, height: 2, panels: 6, eave_depth: 0, spacing: 6, sdl: 0.5, live_load: 0.5, standard: "EN1990",
     chB: 0.15, chT: 0.008, wD: 0.0889, wT: 0.005 });
   const L = u.u("length"), D = u.u("dim");
+  const params = { type: "truss2d", truss_type: p.truss_type, span: p.span, height: p.height, panels: Math.round(p.panels),
+    eave_depth: p.eave_depth, spacing: p.spacing, sdl: p.sdl, live_load: p.live_load, standard: p.standard,
+    chord: { shape: "box", b: p.chB, h: p.chB, t: p.chT }, web: { shape: "pipe", d: p.wD, t: p.wT } };
   return (
     <div>
+      <div className="text-[11px] text-ink-400 mb-1">Truss type</div>
+      <TrussTypePicker value={p.truss_type} onChange={(v) => setP({ ...p, truss_type: v })} />
+      <GenPreview params={params} view="front" height={110} />
       <F label="Standard (combinations, steel)"><select className="input" value={p.standard} onChange={(e) => setP({ ...p, standard: e.target.value })}>{STD_OPTIONS}</select></F>
-      <F label="Truss type">
-        <select className="input" value={p.truss_type} onChange={(e) => setP({ ...p, truss_type: e.target.value })}>
-          <option value="pratt">Pratt (diagonals in tension)</option><option value="howe">Howe (diagonals in compression)</option>
-          <option value="warren">Warren (no verticals)</option><option value="pitched">Pitched roof truss (gable)</option>
-        </select>
-      </F>
       <div className="grid grid-cols-2 gap-x-2">
         <F label={`Span (${L})`}>{num("span", "length")}</F>
         <F label={p.truss_type === "pitched" ? `Rise (${L})` : `Depth (${L})`}>{num("height", "length")}</F>
@@ -127,9 +128,7 @@ function TrussGen() {
         <F label={`Web wall t (${D})`}>{num("wT", "dim")}</F>
       </div>
       <GenNote>Pin-jointed members (axial force only under nodal loads). Roof load = q × spacing, lumped at the top-chord panel points by tributary length (assumed). Left support pinned, right roller; out-of-plane restraint assumed at every node. Steel: {STEEL_FOR[p.standard]}.</GenNote>
-      <button className="btn-primary w-full" disabled={busy} onClick={() => generate({ type: "truss2d", truss_type: p.truss_type, span: p.span, height: p.height, panels: Math.round(p.panels),
-        eave_depth: p.eave_depth, spacing: p.spacing, sdl: p.sdl, live_load: p.live_load, standard: p.standard,
-        chord: { shape: "box", b: p.chB, h: p.chB, t: p.chT }, web: { shape: "pipe", d: p.wD, t: p.wT } })}>Generate truss</button>
+      <button className="btn-primary w-full" disabled={busy} onClick={() => generate(params)}>Generate truss</button>
     </div>
   );
 }
@@ -139,8 +138,10 @@ function WarehouseGen() {
   const { p, setP, num, u } = useSI({ span: 20, bay: 6, n_bays: 5, eave_height: 6, rise: 2, eave_depth: 1, panels: 8, support: "fixed", sdl: 0.3, live_load: 0.5,
     wind_pressure: 0.8, standard: "EN1990", roof_bracing: true, wall_bracing: true });
   const L = u.u("length"), A = u.u("areaLoad");
+  const params = { type: "warehouse", ...p, n_bays: Math.round(p.n_bays), panels: Math.round(p.panels) };
   return (
     <div>
+      <GenPreview params={params} />
       <F label="Standard (combinations, steel)"><select className="input" value={p.standard} onChange={(e) => setP({ ...p, standard: e.target.value })}>{STD_OPTIONS}</select></F>
       <div className="grid grid-cols-2 gap-x-2">
         <F label={`Span (${L})`}>{num("span", "length")}</F>
@@ -158,7 +159,7 @@ function WarehouseGen() {
       <label className="flex items-center gap-2 text-[11px] mb-1"><input type="checkbox" className="accent-sky-400" checked={p.roof_bracing} onChange={(e) => setP({ ...p, roof_bracing: e.target.checked })} />Roof bracing in end bays</label>
       <label className="flex items-center gap-2 text-[11px] mb-2"><input type="checkbox" className="accent-sky-400" checked={p.wall_bracing} onChange={(e) => setP({ ...p, wall_bracing: e.target.checked })} />Wall bracing in end bays</label>
       <GenNote>Pitched Pratt trusses on steel columns, simply supported purlins, eave struts, bottom-chord ties with vertical bracing in the end bays. Roof sheeting spans one way to the purlins (assumed). Untick a bracing option to see the stability check report the mechanism. Steel: {STEEL_FOR[p.standard]}.</GenNote>
-      <button className="btn-primary w-full" disabled={busy} onClick={() => generate({ type: "warehouse", ...p, n_bays: Math.round(p.n_bays), panels: Math.round(p.panels) })}>Generate warehouse</button>
+      <button className="btn-primary w-full" disabled={busy} onClick={() => generate(params)}>Generate warehouse</button>
     </div>
   );
 }
@@ -167,8 +168,10 @@ function SpaceGen() {
   const { generate, busy } = useStore();
   const { p, setP, num, u } = useSI({ nx: 8, ny: 6, module: 2, depth: 1.5, column_height: 5, supports: "perimeter", sdl: 0.5, live_load: 0.75, standard: "EN1990" });
   const L = u.u("length"), A = u.u("areaLoad");
+  const params = { type: "space_truss", ...p, nx: Math.round(p.nx), ny: Math.round(p.ny) };
   return (
     <div>
+      <GenPreview params={params} />
       <F label="Standard (combinations, steel)"><select className="input" value={p.standard} onChange={(e) => setP({ ...p, standard: e.target.value })}>{STD_OPTIONS}</select></F>
       <div className="grid grid-cols-2 gap-x-2">
         <F label="Modules in X">{num("nx", null, 1)}</F>
@@ -181,7 +184,7 @@ function SpaceGen() {
         <F label={`Roof live (${A})`}>{num("live_load", "areaLoad")}</F>
       </div>
       <GenNote>Square-on-square double-layer grid of pin-jointed tubes. Roof load lumped at the top nodes by tributary plan area (assumed). Steel: {STEEL_FOR[p.standard]}.</GenNote>
-      <button className="btn-primary w-full" disabled={busy} onClick={() => generate({ type: "space_truss", ...p, nx: Math.round(p.nx), ny: Math.round(p.ny) })}>Generate space truss</button>
+      <button className="btn-primary w-full" disabled={busy} onClick={() => generate(params)}>Generate space truss</button>
     </div>
   );
 }
@@ -202,7 +205,7 @@ function BuildingGen() {
       onChange={(e) => setP({ ...p, [k]: kind ? u.si(kind, +e.target.value) : +e.target.value })} />
   );
   const setStd = (std: string) => setP({ ...p, standard: std, mat: MATS[std][0], ll: std === "TH" ? 250 * KGM2 : std === "ASCE7" ? 50 * 0.04788 : 3.0, rll: std === "TH" ? 50 * KGM2 : std === "ASCE7" ? 20 * 0.04788 : 1.0, sdl: std === "TH" ? 150 * KGM2 : 1.5 });
-  const run = () => generate({
+  const params = {
     x_spans: p.x, y_spans: p.y, story_heights: p.h,
     column: { shape: "rect", b: p.colB, h: p.colH, material: p.mat },
     main_beam: { shape: "rect", b: p.mbB, h: p.mbH, material: p.mat },
@@ -210,7 +213,8 @@ function BuildingGen() {
     secondary_beams: p.sec, slab_thickness: p.slab, sdl: p.sdl, live_load: p.ll, roof_live_load: p.rll,
     support: p.support, footing: { B: p.fB, L: p.fB, t: p.fT }, wind_pressure: p.wind, seismic_cs: p.cs, standard: p.standard, allowable_bearing: p.qa,
     slab_model: p.slabModel, mesh_size: p.mesh, walls: p.walls, wall_thickness: p.wallT, bracing: p.bracing,
-  });
+  };
+  const run = () => generate(params);
   const listInput = (k: "x" | "y" | "h") => (
     <input className="input" value={listText(k)} onChange={(e) => {
       setLists({ ...lists, [k + u.sys]: e.target.value });
@@ -221,6 +225,7 @@ function BuildingGen() {
   const L = u.u("length"), D = u.u("dim"), A = u.u("areaLoad");
   return (
     <div>
+      <GenPreview params={params} />
       <div className="panel-title mb-2">Design standard</div>
       <F label="Standard (combinations, presets)">
         <select className="input" value={p.standard} onChange={(e) => setStd(e.target.value)}>
