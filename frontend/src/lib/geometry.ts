@@ -47,6 +47,8 @@ export function sectionDims(model: Model, el: Element): { b: number; h: number; 
   if (s.shape === "circle") return { b: s.d!, h: s.d!, shape: "circle" };
   if (s.shape === "pipe") return { b: s.d!, h: s.d!, shape: "circle" };
   if (s.shape === "box") return { b: s.b!, h: s.h!, shape: "rect" };
+  if (s.shape === "channel" || s.shape === "lipchannel") return { b: s.b!, h: s.h!, shape: "rect" };
+  if (s.shape === "angle") return { b: s.b!, h: s.b!, shape: "rect" };
   return { b: s.b ?? 0.3, h: s.h ?? 0.3, shape: "rect" };
 }
 

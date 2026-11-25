@@ -21,7 +21,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .sections import MATERIALS, material_props, section_properties
+from .sections import (MATERIALS, _section_properties, material_props, open_shape_props, plastic_modulus,
+                       section_properties, shape_rects)
+from .steel_tables import table_props
 
 CODES = {
     "AISC360": "AISC 360-16 (LRFD)",
@@ -52,6 +54,8 @@ class Geo:
     tw: float = 0.0
     t: float = 0.0
     fab: str = "rolled"     # rolled | welded (I) ; hot | cold (hollow)
+    x0: float = 0.0         # channel / angle: centroid to shear centre, along the axis of symmetry (the major axis)
+    Sc: float = 0.0         # angle: elastic modulus to the leg tips for minor-axis bending (leg local buckling)
 
     @property
     def ry(self):           # radius of gyration for buckling about the major axis
@@ -67,33 +71,60 @@ class Geo:
 
 
 def geometry(sec: dict) -> Geo:
-    """Section properties for design, including plastic moduli and the warping constant."""
+    """Section properties for design, including plastic moduli and the warping constant.
+
+    A size from the supplier tables uses the table's A, I and elastic moduli S. Its plastic moduli Z are those of the
+    nominal dimensions scaled by S_table / S_dimensions; J and Cw come from the nominal dimensions."""
     p = section_properties(sec)
+    tab = table_props(sec)
+    pd = _section_properties(sec) if tab else p
+    ky, kz = p.Sy / pd.Sy, p.Sz / pd.Sz          # 1.0 unless table properties are used
     shape = sec.get("shape", "rect")
     if shape == "I":
         h, bf, tf, tw = (float(sec[k]) for k in ("h", "bf", "tf", "tw"))
         hw = h - 2 * tf
-        Zy = bf * tf * (h - tf) + tw * hw ** 2 / 4
-        Zz = tf * bf ** 2 / 2 + hw * tw ** 2 / 4
+        Zy = (bf * tf * (h - tf) + tw * hw ** 2 / 4) * ky
+        Zz = (tf * bf ** 2 / 2 + hw * tw ** 2 / 4) * kz
         Cw = (tf * bf ** 3 / 12) * (h - tf) ** 2 / 2      # = I_flange,z * h0^2 / 2 = Iz_flanges * h0^2 / 4
         return Geo("I", p.A, p.Iy, p.Iz, p.J, Cw, p.Sy, p.Sz, Zy, Zz, h, bf, tf, tw, fab=sec.get("fab", "rolled"))
     if shape == "box":
         b, h, t = float(sec["b"]), float(sec["h"]), float(sec["t"])
         bi, hi = b - 2 * t, h - 2 * t
-        Zy = b * h ** 2 / 4 - bi * hi ** 2 / 4
-        Zz = h * b ** 2 / 4 - hi * bi ** 2 / 4
+        Zy = (b * h ** 2 / 4 - bi * hi ** 2 / 4) * ky
+        Zz = (h * b ** 2 / 4 - hi * bi ** 2 / 4) * kz
         return Geo("box", p.A, p.Iy, p.Iz, p.J, 0.0, p.Sy, p.Sz, Zy, Zz, h, b, t=t, fab=sec.get("fab", "cold"))
     if shape == "pipe":
         d, t = float(sec["d"]), float(sec["t"])
         Z = (d ** 3 - (d - 2 * t) ** 3) / 6
-        return Geo("pipe", p.A, p.Iy, p.Iz, p.J, 0.0, p.Sy, p.Sz, Z, Z, d, d, t=t, fab=sec.get("fab", "cold"))
+        return Geo("pipe", p.A, p.Iy, p.Iz, p.J, 0.0, p.Sy, p.Sz, Z * ky, Z * kz, d, d, t=t, fab=sec.get("fab", "cold"))
+    if shape == "channel":
+        h, b, tw, tf = (float(sec[k]) for k in ("h", "b", "tw", "tf"))
+        rects = shape_rects(sec)
+        Zy, Zz = plastic_modulus(rects, "y") * ky, plastic_modulus(rects, "z") * kz
+        bp, hp = b - tw / 2, h - tf                                   # centre-line dimensions
+        e = 3 * bp ** 2 * tf / (6 * bp * tf + hp * tw)                # shear centre from the web centre-line
+        Cw = tf * bp ** 3 * hp ** 2 / 12 * (3 * bp * tf + 2 * hp * tw) / (6 * bp * tf + hp * tw)
+        xc = tab["xc"] if tab else open_shape_props(sec)["xc"]
+        return Geo("channel", p.A, p.Iy, p.Iz, p.J, Cw, p.Sy, p.Sz, Zy, Zz, h, b, tf, tw, fab=sec.get("fab", "rolled"),
+                   x0=xc - tw / 2 + e)
+    if shape == "angle":
+        b, t = float(sec["b"]), float(sec["t"])
+        xc = tab["xc"] if tab else open_shape_props(sec)["xc"]
+        Cw = t ** 3 * 2 * (b - t / 2) ** 3 / 36
+        Sc = p.Iz / ((b + t) / math.sqrt(2) - math.sqrt(2) * xc)      # minor axis, to the leg tips
+        # AISC F10 caps single-angle bending at 1.5 My, so Zy / Zz are set to that limit (not plastic moduli)
+        return Geo("angle", p.A, p.Iy, p.Iz, p.J, Cw, p.Sy, p.Sz, 1.5 * p.Sy, 1.5 * p.Sz, b, b, t=t,
+                   fab=sec.get("fab", "rolled"), x0=math.sqrt(2) * (xc - t / 2), Sc=Sc)
+    if shape == "lipchannel":
+        raise NotCovered("cold-formed lip channel: design rules for cold-formed members (AISI S100 / EN 1993-1-3) are "
+                         "not implemented here, so this section is used in the analysis only")
     if shape == "rect":
         b, h = float(sec["b"]), float(sec["h"])
         return Geo("rect", p.A, p.Iy, p.Iz, p.J, 0.0, p.Sy, p.Sz, b * h ** 2 / 4, h * b ** 2 / 4, h, b)
     if shape == "circle":
         d = float(sec["d"])
         return Geo("circle", p.A, p.Iy, p.Iz, p.J, 0.0, p.Sy, p.Sz, d ** 3 / 6, d ** 3 / 6, d, d)
-    raise NotCovered(f"section shape '{shape}' has no design rules here (give the section as I, box, pipe, rect or circle)")
+    raise NotCovered(f"section shape '{shape}' has no design rules here (give the section as I, channel, angle, box, pipe, rect or circle)")
 
 
 class NotCovered(Exception):
@@ -200,6 +231,14 @@ def aisc_compression(g: Geo, Fy, E, G, p: Params) -> dict:
         Fe_t = (math.pi ** 2 * E * g.Cw / (p.Kt * p.L) ** 2 + G * g.J) / (g.Iy + g.Iz)   # E4-2
         if Fe_t < Fe:
             Fe, mode = Fe_t, "torsional (E4)"
+    elif g.shape in ("channel", "angle"):
+        # singly symmetric, the axis of symmetry is the major axis y: torsion couples with major-axis buckling (E4-3)
+        ro2 = g.x0 ** 2 + (g.Iy + g.Iz) / g.A                                           # E4-9 (y0 = 0)
+        H = 1 - g.x0 ** 2 / ro2                                                         # E4-8
+        Fez = (math.pi ** 2 * E * g.Cw / (p.Kt * p.L) ** 2 + G * g.J) / (g.A * ro2)     # E4-7
+        Fe_ft = (Fe_y + Fez) / (2 * H) * (1 - math.sqrt(1 - 4 * Fe_y * Fez * H / (Fe_y + Fez) ** 2))
+        if Fe_ft < Fe:
+            Fe, mode = Fe_ft, "flexural-torsional (E4)"
     Fcr = aisc_fcr(Fy, Fe)
     Ae, slender = g.A, []
     rE = math.sqrt(E / Fy)
@@ -215,6 +254,11 @@ def aisc_compression(g: Geo, Fy, E, G, p: Params) -> dict:
     if g.shape == "I":
         reduce(g.b / (2 * g.tf), 0.56 * rE, 0.22, 1.49, g.b / 2, g.tf, 4, "flange")
         reduce(g.hw / g.tw, 1.49 * rE, 0.18, 1.31, g.hw, g.tw, 1, "web")
+    elif g.shape == "channel":
+        reduce(g.b / g.tf, 0.56 * rE, 0.22, 1.49, g.b, g.tf, 2, "flange")
+        reduce(g.hw / g.tw, 1.49 * rE, 0.18, 1.31, g.hw, g.tw, 1, "web")
+    elif g.shape == "angle":
+        reduce(g.b / g.t, 0.45 * rE, 0.22, 1.49, g.b, g.t, 2, "legs")
     elif g.shape == "box":
         for w, name in ((g.b - 3 * g.t, "wall b"), (g.h - 3 * g.t, "wall h")):
             reduce(w / g.t, 1.40 * rE, 0.20, 1.38, w, g.t, 2, name)
@@ -232,17 +276,22 @@ def aisc_compression(g: Geo, Fy, E, G, p: Params) -> dict:
 
 def aisc_flexure(g: Geo, Fy, E, axis: str, p: Params, Cb: float) -> dict:
     rE = math.sqrt(E / Fy)
-    if g.shape == "I":
-        lf, lpf, lrf = g.b / (2 * g.tf), 0.38 * rE, 1.0 * rE
+    if g.shape in ("I", "channel"):
+        chan = g.shape == "channel"
+        lf, lpf, lrf = g.b / (g.tf if chan else 2 * g.tf), 0.38 * rE, 1.0 * rE
         if axis == "y":
             lw = g.hw / g.tw
+            name = "channel" if chan else "I-section"
             if lw > 3.76 * rE:
-                raise NotCovered(f"I-section web h/tw = {lw:.0f} > 3.76 sqrt(E/Fy): noncompact/slender web (AISC F4/F5) not implemented")
+                raise NotCovered(f"{name} web h/tw = {lw:.0f} > 3.76 sqrt(E/Fy): noncompact/slender web (AISC F4/F5) not implemented")
+            if chan and lf > lpf:
+                raise NotCovered(f"channel flange b/t = {lf:.1f} > 0.38 sqrt(E/Fy): AISC F2 covers compact channels only")
             Mp, S = Fy * g.Zy, g.Sy
             ho = g.h - g.tf
             rts = math.sqrt(math.sqrt(g.Iz * g.Cw) / S)
             Lp = 1.76 * g.rz * rE                                                       # F2-5
-            jc = g.J / (S * ho)
+            c = ho / 2 * math.sqrt(g.Iz / g.Cw) if chan else 1.0                        # F2-8a / F2-8b
+            jc = g.J * c / (S * ho)
             Lr = 1.95 * rts * E / (0.7 * Fy) * math.sqrt(jc + math.sqrt(jc ** 2 + 6.76 * (0.7 * Fy / E) ** 2))   # F2-6
             Lb = p.Llt
             if Lb <= Lp:
@@ -261,7 +310,7 @@ def aisc_flexure(g: Geo, Fy, E, axis: str, p: Params, Cb: float) -> dict:
                 Mflb = 0.9 * E * kc * S / lf ** 2                                       # F3-2
             Mn = min(Mltb, Mflb)
             return {"phiMn": 0.9 * Mn, "Mp": Mp, "Lp": Lp, "Lr": Lr, "Lb": Lb, "Cb": Cb, "M_ltb": Mltb, "M_flb": Mflb,
-                    "clause": "F2/F3", "limit": "lateral-torsional buckling" if Mltb < Mflb else ("yielding" if Mflb >= Mp else "flange local buckling")}
+                    "clause": "F2" if chan else "F2/F3", "limit": "lateral-torsional buckling" if Mltb < Mflb else ("yielding" if Mflb >= Mp else "flange local buckling")}
         Mp, S = min(Fy * g.Zz, 1.6 * Fy * g.Sz), g.Sz                                   # F6-1
         if lf <= lpf:
             Mn = Mp
@@ -270,6 +319,31 @@ def aisc_flexure(g: Geo, Fy, E, axis: str, p: Params, Cb: float) -> dict:
         else:
             Mn = 0.69 * E / lf ** 2 * S                                                 # F6-3/4
         return {"phiMn": 0.9 * Mn, "Mp": Mp, "clause": "F6", "limit": "yielding" if Mn >= Mp else "flange local buckling"}
+    if g.shape == "angle":
+        lam = g.b / g.t
+        if axis == "y":                                     # major principal axis
+            My, Sc = Fy * g.Sy, g.Sy                         # the leg tips are the extreme fibres
+            Cb1 = min(Cb, 1.5)
+            Lb = p.Llt
+            Mcr = 9 * E * g.A * g.rz * g.t * Cb1 / (8 * Lb)                             # F10-4, equal legs (beta_w = 0)
+            if My / Mcr <= 1.0:
+                Mltb = min((1.92 - 1.17 * math.sqrt(My / Mcr)) * My, 1.5 * My)          # F10-2
+            else:
+                Mltb = (0.92 - 0.17 * Mcr / My) * Mcr                                   # F10-3
+        else:                                               # minor principal axis: no lateral-torsional buckling
+            My, Sc, Mltb, Mcr, Lb, Cb1 = Fy * g.Sz, g.Sc, math.inf, None, None, None
+        if lam <= 0.54 * rE:
+            Mlb = math.inf
+        elif lam <= 0.91 * rE:
+            Mlb = Fy * Sc * (2.43 - 1.72 * lam * math.sqrt(Fy / E))                     # F10-6
+        else:
+            Mlb = 0.71 * E / lam ** 2 * Sc                                              # F10-7/8
+        Mn = min(1.5 * My, Mltb, Mlb)                                                   # F10-1
+        limit = "yielding" if Mn >= 1.5 * My else ("lateral-torsional buckling" if Mltb <= Mlb else "leg local buckling")
+        out = {"phiMn": 0.9 * Mn, "Mp": 1.5 * My, "clause": "F10", "limit": limit}
+        if axis == "y":
+            out.update(Lb=Lb, Cb=Cb1, Mcr=Mcr)
+        return out
     if g.shape == "box":
         bf, hw = (g.b, g.h) if axis == "y" else (g.h, g.b)
         Z, S = (g.Zy, g.Sy) if axis == "y" else (g.Zz, g.Sz)
@@ -338,6 +412,19 @@ def aisc_shear(g: Geo, Fy, E, axis: str, L: float) -> dict:
         Aw = 2 * g.b * g.tf
         Cv2 = aisc_cv2(g.b / (2 * g.tf), 1.2, E, Fy)
         return {"phiVn": 0.9 * 0.6 * Fy * Aw * Cv2, "Aw": Aw, "Cv": Cv2, "phi": 0.9, "clause": "G6"}
+    if g.shape == "channel":
+        if axis == "z":
+            Aw, lam, kv = g.h * g.tw, g.hw / g.tw, 5.34
+            Cv1 = 1.0 if lam <= 1.10 * math.sqrt(kv * E / Fy) else 1.10 * math.sqrt(kv * E / Fy) / lam   # G2-3/4
+            return {"phiVn": 0.9 * 0.6 * Fy * Aw * Cv1, "Aw": Aw, "Cv": Cv1, "phi": 0.9, "clause": "G2.1(b)"}
+        Aw = 2 * g.b * g.tf
+        Cv2 = aisc_cv2(g.b / g.tf, 1.2, E, Fy)
+        return {"phiVn": 0.9 * 0.6 * Fy * Aw * Cv2, "Aw": Aw, "Cv": Cv2, "phi": 0.9, "clause": "G7"}
+    if g.shape == "angle":
+        # G3 for one leg (b t); shear along a principal axis is shared by both legs, so one leg is conservative
+        Aw = g.b * g.t
+        Cv2 = aisc_cv2(g.b / g.t, 1.2, E, Fy)
+        return {"phiVn": 0.9 * 0.6 * Fy * Aw * Cv2, "Aw": Aw, "Cv": Cv2, "phi": 0.9, "clause": "G3"}
     if g.shape == "box":
         hh = (g.h if axis == "z" else g.b) - 3 * g.t
         Aw = 2 * hh * g.t
@@ -437,11 +524,20 @@ def aisc_member(g: Geo, Fy, E, G, p: Params, forces: list[tuple[str, Forces]], c
         notes.append(f"KL/r = {comp['KL_r']:.0f} > 200 (AISC E2 user note recommends at most 200 for compression members).")
     if comp["slender"]:
         notes.append("Slender elements in compression (" + ", ".join(comp["slender"]) + "): effective area by E7.")
-    if g.shape == "I" and any(np.abs(f.T).max() > 1e-3 * Fy * g.Zy for _, f in forces):
+    if g.shape in ("I", "channel", "angle") and any(np.abs(f.T).max() > 1e-3 * Fy * g.Sy for _, f in forces):
         notes.append("Torsion in an open section is not checked.")
+    if g.shape == "channel":
+        notes.append(f"Channel: the member is analysed through its centroid. Loads that do not pass through the shear "
+                     f"centre ({g.x0 * 1000:.0f} mm from the centroid, behind the web) twist it; that torsion is not "
+                     "checked. Flexural-torsional buckling by E4 with Cw and the shear centre from the nominal dimensions.")
+    if g.shape == "angle":
+        notes.append("Single angle checked about its principal axes (local y = major axis u along the axis of symmetry, "
+                     "local z = minor axis v): set the member roll so this holds. Bending by F10 (equal legs), shear by "
+                     "G3 on one leg, interaction by H1. The eccentricity of an end connection through one leg (E5) is not "
+                     "included.")
     if "shear" in info:
         notes.append(info["shear"])
-    if Tc is None and g.shape != "I":
+    if Tc is None and g.shape not in ("I", "channel", "angle"):
         notes.append("Torsion not checked for this section.")
     return {"checks": list(checks.values()), "notes": notes,
             "props": {"phiPn": comp["phiPn"], "phiTn": phiTn, "phiMny": flex_y0["phiMn"] if flex_y0 else None,
@@ -793,6 +889,9 @@ def check_member(sec: dict, mat: dict, p: Params, forces: list[tuple[str, Forces
     g = geometry(sec)
     if code in ("AISC360", "EIT"):
         return aisc_member(g, fy, mp["E"], mp["G"], p, forces, code)
+    if g.shape in ("channel", "angle"):
+        raise NotCovered(f"EN 1993-1-1 checks for {g.shape}s are not implemented here (use AISC 360 or Thai EIT for "
+                         "these members)")
     return ec3_member(g, fy, mp["E"], mp["G"], p, forces)
 
 
@@ -847,7 +946,8 @@ def steel_design(model: dict, code: str | None = None, results: dict | None = No
             "AISC 360 chapter C asks for second-order effects (direct analysis method with notional loads and "
             "reduced stiffness): not included here."),
         "Connections, net-section rupture, bolt holes, web crippling under concentrated loads and seismic detailing are not checked.",
-        "Fillet / corner radii are ignored in the section properties (slightly conservative).",
+        "Sizes picked from the supplier tables use the table's area, inertia and elastic moduli (fillets included). "
+        "Other sections: fillet / corner radii are ignored in the section properties (slightly conservative).",
     ]
     if code == "EC3":
         gnotes.append("gamma_M0 = gamma_M1 = 1.0 (recommended values); check the National Annex.")

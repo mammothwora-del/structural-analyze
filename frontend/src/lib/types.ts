@@ -1,7 +1,7 @@
 export type Vec3 = [number, number, number];
 
 export interface Node { id: string; x: number; y: number; z: number; level?: number; grid?: string }
-export interface Section { name?: string; shape: "rect" | "I" | "circle" | "pipe" | "box" | "general"; material: string; b?: number; h?: number; bf?: number; tf?: number; tw?: number; d?: number; t?: number; A?: number; Iy?: number; Iz?: number; J?: number;
+export interface Section { name?: string; shape: "rect" | "I" | "circle" | "pipe" | "box" | "channel" | "angle" | "lipchannel" | "general"; material: string; b?: number; h?: number; bf?: number; tf?: number; tw?: number; d?: number; t?: number; c?: number; A?: number; Iy?: number; Iz?: number; J?: number;
   /** "rolled" | "welded" (I) or "cold" | "hot" (hollow); catalog = standard size name when picked from the tables */
   fab?: string; catalog?: string }
 export interface Material { name: string; kind: string; E: number; nu: number; density: number; fck?: number; fy?: number }
@@ -114,8 +114,9 @@ export interface RcDesignResult {
   summary: SteelDesignResult["summary"]; notes: string[];
 }
 
-/** Standard steel size (nominal dimensions in m, A in m², mass in kg/m). */
-export interface CatalogEntry { family: "H" | "SHS" | "RHS" | "CHS"; name: string; shape: "I" | "box" | "pipe"; fab: string; h?: number; bf?: number; tw?: number; tf?: number; b?: number; t?: number; d?: number; A: number; mass: number }
+/** Standard steel size (nominal dimensions in m, A in m², mass in kg/m). source "table" = supplier's table properties. */
+export interface CatalogEntry { family: "H" | "I" | "C" | "L" | "LC" | "SHS" | "RHS" | "CHS"; name: string; shape: "I" | "box" | "pipe" | "channel" | "angle" | "lipchannel"; fab: string;
+  h?: number; bf?: number; tw?: number; tf?: number; b?: number; t?: number; d?: number; c?: number; A: number; mass: number; source?: "table" | "nominal" }
 export interface SteelCatalog { families: Record<string, string>; sections: CatalogEntry[] }
 export interface SuggestGroup {
   section: string; locked: boolean; families: string[]; from: string; to: string; changed: boolean; n_members: number;

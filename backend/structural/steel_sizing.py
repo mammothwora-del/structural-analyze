@@ -2,7 +2,8 @@
 
 Every member that uses a section id is one group (all columns "COL", all chords "CHO", ...). For each group the
 lightest size of the chosen family is taken whose utilisation is at most the target for every member of the group,
-with the internal forces of the current analysis. Changing sizes changes the stiffness and the self-weight and so
+with the internal forces of the current analysis. A group that comes back to a size it had before (a lighter, stiffer
+size attracts more force) only moves up from then on, so the passes settle. Changing sizes changes the stiffness and the self-weight and so
 the forces, so the model is analysed again and the sizing repeated until no group changes (or max_iter). The
 final model is then analysed and checked once more from scratch: the utilisations reported are those of that final
 check, not of the sizing passes.
@@ -16,7 +17,7 @@ import numpy as np
 
 from .analysis import analyze
 from .sections import MATERIALS, section_properties
-from .steel_catalog import FAMILIES, SHAPE_FAMILIES, as_section, family
+from .steel_catalog import ANALYSIS_ONLY, FAMILIES, SHAPE_FAMILIES, as_section, family
 from .steel_design import (NotCovered, check_member, design_combinations, member_forces, member_params, resolve_code,
                            steel_design)
 
@@ -40,7 +41,8 @@ def _util(sec, mat, p, forces, code):
 
 def suggest_sections(model: dict, code: str | None = None, target: float = 1.0, groups: dict | None = None,
                      max_iter: int = 6, limit_slenderness: bool = True) -> dict:
-    """groups: {section_id: "keep" | "lock" | "H" | "SHS" | "RHS" | "CHS"} (default "keep": same shape family).
+    """groups: {section_id: "keep" | "lock" | a family: "H", "I", "C", "L", "SHS", "RHS", "CHS"} (default "keep":
+    the families of the same shape).
 
     limit_slenderness: also require KL/r <= 200 for members in compression and L/r <= 300 for members only in
     tension. These are the AISC 360-16 recommendations (user notes to E2 and D1), not a strength check.
@@ -71,9 +73,11 @@ def suggest_sections(model: dict, code: str | None = None, target: float = 1.0, 
         fams = SHAPE_FAMILIES.get(sec.get("shape"), ()) if choice == "keep" else (choice,)
         if choice != "keep" and choice not in FAMILIES:
             raise ValueError(f"Unknown section family '{choice}' for section {sid}")
+        if choice in ANALYSIS_ONLY:
+            raise ValueError(f"{FAMILIES[choice]} have no design checks here, so they cannot be suggested (section {sid})")
         if not fams:
-            notes.append(f"{sid}: shape '{sec.get('shape')}' has no standard sizes here, so it was left as it is. "
-                         "Pick a family (H, SHS, RHS or CHS) to size it.")
+            notes.append(f"{sid}: shape '{sec.get('shape')}' has no design-checked standard sizes here, so it was left "
+                         "as it is. Pick a family (H, I, C, L, SHS, RHS or CHS) to size it.")
             plan[sid] = None
             continue
         cands = sorted((c for f in fams for c in family(f)), key=lambda c: c["A"])
@@ -84,6 +88,8 @@ def suggest_sections(model: dict, code: str | None = None, target: float = 1.0, 
 
     combos, _ = design_combinations(m)
     history, converged, short = [], False, set()
+    seen = {sid: [m["sections"][sid].get("catalog")] for sid in plan}
+    upward: set[str] = set()
     for it in range(max_iter):
         res = analyze(m)
         if not res.get("ok", True):
@@ -100,7 +106,9 @@ def suggest_sections(model: dict, code: str | None = None, target: float = 1.0, 
                 continue
             cur = m["sections"][sid]
             # worst members first, so a size that is too small is rejected after one or two checks
-            jobs.sort(key=lambda j: -(_util(cur, mat, j[0], j[1], code) or 0.0))
+            cur_u = [(_util(cur, mat, p, f, code), (p, f)) for p, f in jobs]
+            cur_u.sort(key=lambda x: -(x[0] or 0.0))
+            jobs = [j for _, j in cur_u]
             pick = None
             for c in pl["cands"]:
                 sec = as_section(c, pl["material"])
@@ -112,7 +120,17 @@ def suggest_sections(model: dict, code: str | None = None, target: float = 1.0, 
             if pick is None:
                 pick = as_section(pl["cands"][-1], pl["material"])
                 short.add(sid)
-            if pick.get("catalog") != cur.get("catalog") or any(cur.get(k) != pick.get(k) for k in ("shape", "h", "b", "t", "d", "bf", "tf", "tw")):
+            # A lighter but stiffer size can attract more force and fail, then the heavier one is picked again, and so
+            # on. Once a group returns to a size it had before, it only moves to heavier sizes: the current size is
+            # kept while it still passes.
+            if pick.get("catalog") in seen[sid][:-1]:
+                upward.add(sid)
+            if sid in upward and cur.get("catalog") and section_properties(pick).A < section_properties(cur).A \
+                    and all(u is not None and u <= target + 1e-9 for u, _ in cur_u) \
+                    and not (limit_slenderness and any((r := slenderness(cur, p, f))[0] > r[1] for p, f in jobs)):
+                pick = cur
+            seen[sid].append(pick.get("catalog"))
+            if pick.get("catalog") != cur.get("catalog") or any(cur.get(k) != pick.get(k) for k in ("shape", "h", "b", "t", "d", "bf", "tf", "tw", "c")):
                 changes.append((sid, cur.get("name", sid), pick["name"]))
                 m["sections"][sid] = pick
         history.append({"iteration": it + 1, "changes": [{"section": s, "from": a, "to": b} for s, a, b in changes]})
