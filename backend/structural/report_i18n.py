@@ -187,6 +187,11 @@ TH: dict[str, str] = {
     "Design notes and assumptions": "หมายเหตุและสมมติฐานการออกแบบ",
     "({k} members)": "({k} องค์อาคาร)",
     "({k} member)": "({k} องค์อาคาร)",
+    # wind
+    "Wind loads: DPT 1311-50, low-rise method": "แรงลม: มยผ. 1311-50 วิธีสำหรับอาคารเตี้ย",
+    "WIND_PARAMS": "พื้นที่ความเร็วลมกลุ่ม {zone} สภาพภูมิประเทศแบบ {exp} หน่วยแรงลมภายในกรณี {cat}: V = {V} ม./วินาที, q = {q} kN/m², "
+                   "Iw = {iw}, Ce = {ce} ที่ h = {h} ม., ความชันหลังคา {slope}°, ระยะบริเวณปลาย y = {y} ม., ระยะขอบ z = {z} ม. "
+                   "p = Iw·q·Ce·(CpCg − 2.0·Cpi) โดย CpCg จากรูปที่ ข.1 สภาวะใช้งาน: {sls} × แรงลมแต่ละกรณี",
     # deflection
     "Deflection check could not run: {e}": "ตรวจสอบการแอ่นตัวไม่ได้: {e}",
     "Deflection and drift (serviceability)": "การแอ่นตัวและการเคลื่อนตัวทางข้าง (สภาวะใช้งาน)",

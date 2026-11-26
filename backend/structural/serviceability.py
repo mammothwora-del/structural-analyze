@@ -16,7 +16,9 @@ Members are grouped into spans, because a beam is often several elements in the 
 Serviceability combinations (unfactored):
   * total: the model's SLS combinations (names or ids with SLS, service, characteristic), or D + L when there are none;
   * live: the live load cases alone;
-  * wind: each wind case alone, times a factor (1.0; 0.6 for ASCE 7, whose wind loads are strength level).
+  * wind: each wind case alone, times a factor: the one given, else the case's own "sls_factor" (set by the DPT 1311
+    wind generator: serviceability pressure / strength pressure), else 1.0 (0.6 for ASCE 7, whose wind loads are
+    strength level).
 Beams and trusses: the total limit for "total", the live limit for "live" (and for "wind" on roof members). Drift:
 every serviceability combination.
 
@@ -44,6 +46,7 @@ MAX_TURN = math.radians(35.0)
 def sls_combinations(model: dict, wind_factor: float | None = None) -> list[dict]:
     cases = {c["id"]: c.get("type", "") for c in model.get("load_cases", [])}
     std = model.get("settings", {}).get("standard", "EN1990")
+    user_factor = wind_factor is not None
     if wind_factor is None:
         wind_factor = 0.6 if std == "ASCE7" else 1.0
     out = []
@@ -60,9 +63,11 @@ def sls_combinations(model: dict, wind_factor: float | None = None) -> list[dict
     live = {k: 1.0 for k, t in cases.items() if t == "live"}
     if live:
         out.append({"id": "SLS-L", "name": "L alone", "factors": live, "kind": "live"})
+    sls_f = {c["id"]: c.get("sls_factor") for c in model.get("load_cases", [])}
     for k, t in cases.items():
         if t == "wind":
-            out.append({"id": f"SLS-{k}", "name": f"{wind_factor:g} × {k} alone", "factors": {k: wind_factor}, "kind": "wind"})
+            f = wind_factor if user_factor or sls_f.get(k) is None else float(sls_f[k])
+            out.append({"id": f"SLS-{k}", "name": f"{f:g} × {k} alone", "factors": {k: f}, "kind": "wind"})
     return out
 
 

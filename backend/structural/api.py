@@ -117,6 +117,18 @@ def run_deflection(req: dict):
         raise HTTPException(400, f"Invalid request: {exc}") from exc
 
 
+@app.post("/api/loads/wind")
+def run_wind(req: dict):
+    """{"model": {...}, "params": {"zone": "1"|"2"|"3"|"4A"|"4B", "importance": "low"|"normal"|"high"|"very_high",
+    "exposure": "A"|"B", "internal": "1"|"2"|"3", "use_tf": true, "ridge": "auto"|"x"|"y", "roof_slope": null,
+    "all_corners": false, "replace": true}} -> {"model", "summary"} (DPT 1311-50 low-rise method)"""
+    from .wind import generate_wind
+    try:
+        return _r(generate_wind(req["model"], req.get("params") or {}))
+    except (KeyError, ValueError, IndexError, TypeError) as exc:
+        raise HTTPException(400, f"Wind loads could not be generated: {exc}") from exc
+
+
 @app.get("/api/sections/catalog")
 def section_catalog():
     """Standard steel section sizes (nominal dimensions in m, area in m², mass in kg/m)."""

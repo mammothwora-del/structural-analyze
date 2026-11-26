@@ -44,6 +44,7 @@ export function TopBar() {
     ],
     Loads: [
       ["Load visualisation", () => set({ mode: "loads", view: "3d" })],
+      ["Wind loads, Thai DPT 1311-50…", () => set({ dialog: "wind" }), !model],
       ["Load cases", () => set({ bottomTab: "cases" })],
       ["Combinations", () => set({ bottomTab: "combos" })],
     ],

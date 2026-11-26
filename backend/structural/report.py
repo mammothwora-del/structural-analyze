@@ -475,6 +475,16 @@ def _build(model, include, steel_code, rc_options, image_png, stability_load, pr
             rows.append([c["id"], Paragraph(_esc(c.get("name", "")), st["cell"]), c.get("type", ""),
                          tr("yes") if c.get("self_weight") else "", str(n_loads.get(c["id"], 0) + n_area.get(c["id"], 0))])
         d.add(_table(rows, widths=[16 * mm, 80 * mm, 22 * mm, 22 * mm, 26 * mm]))
+        wd = model.get("wind")
+        if wd:
+            wp = wd.get("params", {})
+            d.h2(tr("Wind loads: DPT 1311-50, low-rise method"), "CALCULATED")
+            d.p(_esc(tr("WIND_PARAMS", "Zone {zone}, exposure {exp}, internal pressure category {cat}: V = {V} m/s, q = {q} kN/m², "
+                        "Iw = {iw}, Ce = {ce} at h = {h} m, roof slope {slope}°, end zone y = {y} m, edge strip z = {z} m. "
+                        "p = Iw·q·Ce·(CpCg − 2.0·Cpi) with CpCg from Figure ข.1. Serviceability: {sls} × each wind case.",
+                        zone=wp.get("zone", ""), exp=wp.get("exposure", ""), cat=wp.get("internal", ""), V=_f(wd.get("V"), 1),
+                        q=_f(wd.get("q"), 3), iw=_f(wd.get("Iw"), 2), ce=_f(wd.get("Ce"), 3), h=_f(wd.get("h")),
+                        slope=_f(wd.get("slope"), 1), y=_f(wd.get("y_end")), z=_f(wd.get("z_edge")), sls=_f(wd.get("sls_factor"), 3))), "small")
         d.h2(tr("Load combinations"))
         rows = [[tr("Id"), tr("Name"), tr("Factors"), tr("Used for design")]]
         ids = {c for c, _ in combos}

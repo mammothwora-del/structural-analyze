@@ -14,7 +14,7 @@ export interface Slab { id: string; corners: string[]; thickness: number; densit
 export interface Wall { id: string; corners: string[]; thickness: number; density?: number; material?: string; level?: number; base_support?: string | null; label?: string }
 export interface Footing { B: number; L: number; t: number; type?: string; label?: string }
 export interface Support { node: string; type?: "fixed" | "pinned" | "roller"; dofs?: number[]; footing?: Footing; lateral?: boolean }
-export interface LoadCase { id: string; name: string; type: string; self_weight?: boolean }
+export interface LoadCase { id: string; name: string; type: string; self_weight?: boolean; sls_factor?: number }
 export interface Load {
   case: string; kind: "nodal" | "dist" | "point" | "area"; label?: string;
   node?: string; values?: number[];
@@ -33,6 +33,7 @@ export interface Model {
   load_cases: LoadCase[]; loads: Load[]; combinations: Combination[];
   generator?: Record<string, unknown>;
   notes?: string[];
+  wind?: Record<string, unknown>;
 }
 
 export interface Stations {
@@ -141,4 +142,14 @@ export interface DeflectionResult {
   combinations: { id: string; name: string; kind: "total" | "live" | "wind" }[]; limits: DeflectionLimits; drift_limit: number;
   items: DeflectionItem[]; members: Record<string, { id: string; util: number; status: "ok" | "fail"; span: string; kind: string }>;
   summary: { n: number; ok: number; fail: number; max_util: number | null }; notes: string[];
+}
+
+/** DPT 1311-50 wind generator (backend wind.py); pressures in kN/m², lengths in m, forces in kN. */
+export interface WindParams { zone: "1" | "2" | "3" | "4A" | "4B"; importance: "low" | "normal" | "high" | "very_high"; exposure: "A" | "B";
+  internal: "1" | "2" | "3"; use_tf: boolean; ridge: "auto" | "x" | "y"; roof_slope: number | null; all_corners: boolean; replace: boolean }
+export interface WindCaseSummary { id: string; name: string; case: 1 | 2; cpi: number; zones: Record<string, { cpcg: number; p: number }>; resultant: number[]; n_loads: number }
+export interface WindSummary {
+  params: WindParams; V50: number; TF: number; tf_used: number; V: number; q: number; Iw: number; Iw_sls: number; h: number; He: number; H: number;
+  Ce: number; slope: number; ridge: "x" | "y"; Ds: number; z_edge: number; y_end: number; B_across: number; B_along: number; cpi: [number, number];
+  sls_factor: number; cases: WindCaseSummary[]; notes: string[]; zone_name: string; removed_cases: string[];
 }

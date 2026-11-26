@@ -253,6 +253,36 @@ The sections a generator gives are **starting sizes, not designed sizes**. You c
   that a group is reported when even the largest size is too small. `tests/test_steel_tables.py` checks every table
   row against its dimensions, the angle principal axes, and the channel and angle checks against hand calculations.
 
+## Wind loads: Thai DPT 1311-50 (low-rise buildings)
+
+**Loads → Wind loads, Thai DPT 1311-50…** (`structural/wind.py`, `POST /api/loads/wind`). It works on any model with
+columns, such as a warehouse, a portal frame or a low building.
+
+- **Inputs:** wind zone (1, 2, 3, 4A, 4B), importance (Iw), exposure A or B, internal pressure category, and the
+  ridge direction and roof slope (both read from the model unless you set them). The dialog shows q, Ce, h, the end
+  zones and the pressure of every zone before anything is added.
+- **Method (simplified procedure, Appendix ข.1):**
+  - q = ½·1.25·V². Strength uses V = TF·V50 (TF for zones 4A and 4B, can be switched off), serviceability uses V50.
+  - Ce at h, the mid-height of the roof (at least 6 m; the eave height when the slope is below 7°).
+  - CpCg from Figure ข.1, interpolated for the roof slope: load case 1 (wind across the ridge) and case 2 (along it),
+    with the end zones 1E to 6E.
+  - Internal pressure Cpi with Cgi = 2.0: each direction is added once with the highest and once with the lowest Cpi.
+- **Load cases:** 4 directions × 2 internal pressures = 8 cases (16 with "all corners"). The old simplified wind
+  case is replaced. The TH2 / TH3 combinations (or the EN / ASCE wind combinations) are made once per wind case.
+  The deflection check takes each wind case × (serviceability ÷ strength pressure), 0.75 for normal importance.
+- **How the pressures reach the frame (ASSUMED):** walls span horizontally to the columns in the wall plane
+  (tributary width), and roof sheeting spans to the purlins (half the distance to the neighbours along the slope,
+  normal to the roof). The gable triangle above the eave is lumped at the end-frame roof nodes. A flat roof with slab
+  panels gets area loads. Check the resultants in the dialog against your own estimate.
+- **Scope:** h ≤ 23 m and h/Ds < 1, otherwise refused (use the detailed procedure). Not included: cladding pressures
+  (Figures ข.2, ข.3), hills, dynamic effects, canopies and open structures, and special multi-span coefficients (the
+  windward roof zone runs from the windward eave to the first ridge).
+- Values were taken from the published DPT 1311-50 text (Tables 2-2, 2-3, Appendix ก, Figure ข.1 tables). The zone
+  layout of Figure ข.1 is the standard one for this method (1/4 walls, 2/3 roof, 5/6 end walls in case 2). The end-wall
+  strips 5E / 6E are taken as width z at the corner side; check this against the figure in your copy.
+- **Tests:** `tests/test_wind.py`: q, Ce and CpCg values, a portal warehouse whose force resultants equal a hand
+  calculation (and equal the reactions), cases and combinations, scope limits, the API and the report.
+
 ## Deflection and drift (serviceability)
 
 Design mode, **Deflection** tab (`structural/serviceability.py`, `POST /api/design/deflection`).

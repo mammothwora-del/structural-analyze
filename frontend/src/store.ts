@@ -61,7 +61,7 @@ interface State {
   rcOptions: { main_grade: string; tie_grade: string; cover: number };
   rcBusy: boolean;
   rcError: string | null;
-  dialog: null | "dxf" | "report";
+  dialog: null | "dxf" | "report" | "wind";
   reportInfo: { engineer: string; project: string; lang?: "en" | "th" };
   set: (p: Partial<State>) => void;
   setModel: (m: Model, keepResults?: boolean) => void;

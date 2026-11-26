@@ -1,14 +1,15 @@
 import { useState, type ReactNode } from "react";
+import { WindDialog } from "./WindDialog";
 import { api, type DxfOptions } from "../lib/api";
 import { download } from "../lib/download";
 import { safeName } from "../lib/project";
 import { useStore } from "../store";
 import { CODE_OPTIONS } from "./DesignPanel";
 
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div role="dialog" aria-label={title} className="w-[440px] max-w-[94vw] max-h-[90vh] overflow-y-auto rounded-lg border border-ink-700 bg-ink-900 p-4 text-xs text-ink-200 shadow-2xl">
+      <div role="dialog" aria-label={title} className={`${wide ? "w-[640px]" : "w-[440px]"} max-w-[94vw] max-h-[90vh] overflow-y-auto rounded-lg border border-ink-700 bg-ink-900 p-4 text-xs text-ink-200 shadow-2xl`}>
         <div className="flex items-center justify-between mb-3">
           <div className="text-sm font-semibold">{title}</div>
           <button className="text-ink-400 hover:text-ink-100" onClick={onClose} aria-label="Close">✕</button>
@@ -27,6 +28,7 @@ export function FileDialogs() {
   const dialog = useStore((s) => s.dialog);
   const close = () => useStore.setState({ dialog: null });
   if (dialog === "dxf") return <Modal title="Import DXF wireframe" onClose={close}><DxfDialog onDone={close} /></Modal>;
+  if (dialog === "wind") return <Modal title="Wind loads: DPT 1311-50 (low-rise buildings)" onClose={close} wide><WindDialog onDone={close} /></Modal>;
   if (dialog === "report") return <Modal title="PDF calculation report" onClose={close}><ReportDialog onDone={close} /></Modal>;
   return null;
 }
