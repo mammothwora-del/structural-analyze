@@ -120,6 +120,8 @@ The integrated values at end j are checked against the FE nodal solution (`end_c
 | Seismic drift, vibration, ponding, long-term concrete deflection | **Not** checked |
 | Wind pressures, DPT 1311-50 low-rise method (q, Iw, Ce, CpCg Figure ข.1, Cpi) | Calculated from the standard's values (resultants verified by hand calculation) |
 | Wind load path to the frame (walls to columns, sheeting to purlins), zone 5E/6E strip width | **Assumed** |
+| Steel mass and concrete volume of the members (BOQ) | Calculated (centre-line lengths; table kg/m or area × density) |
+| BOQ allowance and unit prices | **Input** by the user; none assumed |
 
 ## Steel design (`structural/steel_design.py`)
 * Design forces: linear superposition of the load-case results for each ultimate combination (combinations whose id

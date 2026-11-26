@@ -153,3 +153,13 @@ export interface WindSummary {
   Ce: number; slope: number; ridge: "x" | "y"; Ds: number; z_edge: number; y_end: number; B_across: number; B_along: number; cpi: [number, number];
   sls_factor: number; cases: WindCaseSummary[]; notes: string[]; zone_name: string; removed_cases: string[];
 }
+
+/** Bill of quantities (backend boq.py). Lengths m, mass kg, volume m³, prices per kg / per m³ in the chosen currency. */
+export interface BoqOptions { allowance: number; currency: string; prices: Record<string, number>; concrete_price: number | null }
+export interface BoqRow { section: string; description: string; family: string; material: string; kind: string; A: number; kg_per_m: number;
+  mass_source: string; n: number; length: number; roles: string[]; mass?: number; mass_total?: number; volume?: number; unit_price?: number | null; cost: number | null }
+export interface BoqResult {
+  currency: string; allowance: number; rows: BoqRow[]; families: { family: string; mass: number; mass_total: number; length: number; cost: number | null }[];
+  by_type: { role: string; length: number; mass: number }[];
+  totals: { steel_mass: number; steel_mass_total: number; steel_length: number; concrete_volume: number; cost: number | null; complete: boolean }; notes: string[];
+}

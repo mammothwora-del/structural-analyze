@@ -32,7 +32,7 @@ from .serviceability import DEFAULT_LIMITS as DEFL_DEFAULTS
 from .steel_design import combine_member, design_combinations
 
 INCLUDE_DEFAULTS = {"model": True, "loads": True, "analysis": True, "members": True, "stability": False,
-                    "steel": True, "rc": True, "deflection": True}
+                    "steel": True, "rc": True, "deflection": True, "boq": True}
 QTY = ("N", "Vy", "Vz", "T", "My", "Mz")
 QTY_UNIT = {"N": "kN", "Vy": "kN", "Vz": "kN", "T": "kN·m", "My": "kN·m", "Mz": "kN·m"}
 UNIT = {"force": "kN", "moment": "kN·m", "ratio": ""}
@@ -326,7 +326,7 @@ def _member_envelope(model, res, loads):
 # ---------------------------------------------------------------------------------------------------------------
 def build_report(model: dict, include: dict | None = None, steel_code: str | None = None, rc_options: dict | None = None,
                  image_png: str | None = None, stability_load: str | None = None, project: dict | None = None,
-                 lang: str = "en", deflection: dict | None = None) -> bytes:
+                 lang: str = "en", deflection: dict | None = None, boq: dict | None = None) -> bytes:
     """Return the PDF bytes. ``image_png`` is an optional base64 PNG (data URL or raw) of the 3D view.
     ``lang`` "en" or "th" (Thai headings, tables and notes; numbers and clause references unchanged).
     ``deflection``: {"limits": {...}, "wind_factor": ...} for the deflection and drift section."""
@@ -336,12 +336,12 @@ def build_report(model: dict, include: dict | None = None, steel_code: str | Non
         _register_thai()
     token = _LANG.set(lang)
     try:
-        return _build(model, include, steel_code, rc_options, image_png, stability_load, project, deflection or {})
+        return _build(model, include, steel_code, rc_options, image_png, stability_load, project, deflection or {}, boq or {})
     finally:
         _LANG.reset(token)
 
 
-def _build(model, include, steel_code, rc_options, image_png, stability_load, project, defl_opt) -> bytes:
+def _build(model, include, steel_code, rc_options, image_png, stability_load, project, defl_opt, boq_opt) -> bytes:
     inc = {**INCLUDE_DEFAULTS, **(include or {})}
     project = project or {}
     st = _styles()
@@ -675,6 +675,48 @@ def _build(model, include, steel_code, rc_options, image_png, stability_load, pr
             d.p(tr("… and {n} more.", n=len(defl["items"]) - len(shown)), "muted")
         d.h2(tr("Deflection notes and assumptions"), "ASSUMED")
         d.bullets(list(defl["notes"]))
+
+    if inc["boq"]:
+        from .boq import quantities
+        try:
+            qb = quantities(model, boq_opt)
+        except (ValueError, KeyError) as exc:
+            qb = None
+            errors.append(tr("Quantities could not be calculated: {e}", e=exc))
+        if qb and qb["rows"]:
+            cur = qb["currency"]
+            d.story.append(PageBreak())
+            d.h1(tr("Quantities and cost"), "CALCULATED")
+            steel_rows = [x for x in qb["rows"] if x["kind"] == "steel"]
+            if steel_rows:
+                d.h2(tr("Steel"))
+                rows = [[tr(h) for h in ("Section", "Description", "Members", "Length (m)", "kg/m", "Mass (kg)")]
+                        + [tr("With allowance (kg)"), tr("Cost ({c})", c=cur)]]
+                for x in steel_rows:
+                    rows.append([x["section"], Paragraph(_esc(x["description"]), st["cell"]), str(x["n"]), _f(x["length"], 1),
+                                 _f(x["kg_per_m"]), _f(x["mass"], 0), _f(x["mass_total"], 0),
+                                 _f(x["cost"], 0) if x["cost"] is not None else "–"])
+                t = qb["totals"]
+                fam_cost = [x["cost"] for x in steel_rows if x["cost"] is not None]
+                rows.append([tr("Total"), "", str(sum(x["n"] for x in steel_rows)), _f(t["steel_length"], 1), "",
+                             _f(t["steel_mass"], 0), _f(t["steel_mass_total"], 0), _f(sum(fam_cost), 0) if fam_cost else "–"])
+                d.add(_table(rows, widths=[16 * mm, 42 * mm, 15 * mm, 19 * mm, 15 * mm, 20 * mm, 22 * mm, 23 * mm], align_right_from=2,
+                             styles_extra=[("FONT", (0, len(rows) - 1), (-1, len(rows) - 1), _FB(), 7.5 if _th() else 7)]))
+            conc = [x for x in qb["rows"] if x["kind"] == "concrete"]
+            if conc:
+                d.h2(tr("Concrete members"))
+                rows = [[tr("Section"), tr("Description"), tr("Members"), tr("Length (m)"), tr("Volume (m³)"), tr("Cost ({c})", c=cur)]]
+                for x in conc:
+                    rows.append([x["section"], Paragraph(_esc(x["description"]), st["cell"]), str(x["n"]), _f(x["length"], 1),
+                                 _f(x["volume"], 2), _f(x["cost"], 0) if x["cost"] is not None else "–"])
+                d.add(_table(rows, widths=[18 * mm, 50 * mm, 18 * mm, 22 * mm, 24 * mm, 26 * mm], align_right_from=2))
+            if qb["by_type"]:
+                d.h2(tr("Steel by member type"))
+                rows = [[tr("Member type"), tr("Length (m)"), tr("Mass (kg)")]] + [
+                    [t["role"], _f(t["length"], 1), _f(t["mass"], 0)] for t in qb["by_type"]]
+                d.add(_table(rows, widths=[40 * mm, 25 * mm, 25 * mm], align_right_from=1))
+            d.h2(tr("Quantity notes"), "ASSUMED")
+            d.bullets(qb["notes"])
 
     # ------------------------------------------------------------------ closing
     d.h1(tr("Limitations"))

@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { BoqDialog } from "./BoqDialog";
 import { WindDialog } from "./WindDialog";
 import { api, type DxfOptions } from "../lib/api";
 import { download } from "../lib/download";
@@ -29,6 +30,7 @@ export function FileDialogs() {
   const close = () => useStore.setState({ dialog: null });
   if (dialog === "dxf") return <Modal title="Import DXF wireframe" onClose={close}><DxfDialog onDone={close} /></Modal>;
   if (dialog === "wind") return <Modal title="Wind loads: DPT 1311-50 (low-rise buildings)" onClose={close} wide><WindDialog onDone={close} /></Modal>;
+  if (dialog === "boq") return <Modal title="Quantities and cost (BOQ)" onClose={close} wide><BoqDialog onDone={close} /></Modal>;
   if (dialog === "report") return <Modal title="PDF calculation report" onClose={close}><ReportDialog onDone={close} /></Modal>;
   return null;
 }
@@ -114,6 +116,7 @@ const PARTS: [string, string, boolean][] = [
   ["steel", "Steel member design", true],
   ["rc", "RC beam and column design", true],
   ["deflection", "Deflection and drift (serviceability)", true],
+  ["boq", "Quantities and cost (BOQ)", true],
 ];
 
 function ReportDialog({ onDone }: { onDone: () => void }) {
@@ -135,7 +138,7 @@ function ReportDialog({ onDone }: { onDone: () => void }) {
       const pdf = await api.report({
         model, include: inc, steel_code: s.steelCode || undefined, rc_options: s.rcOptions, stability_load: stabLoad || undefined,
         image: canvas ? canvas.toDataURL("image/png") : undefined, project: { title, project: info.project, engineer: info.engineer }, lang: info.lang,
-        deflection: s.deflSettings,
+        deflection: s.deflSettings, boq: s.boqSettings,
       });
       download(`${safeName(title)}-report${info.lang === "th" ? "-th" : ""}.pdf`, pdf);
       s.set({ log: [...useStore.getState().log, `PDF calculation report created (${(pdf.size / 1024).toFixed(0)} kB). The server re-ran the analysis${inc.steel || inc.rc ? " and the designs" : ""} for it.`] });
@@ -173,6 +176,7 @@ function ReportDialog({ onDone }: { onDone: () => void }) {
             <span>{label}</span>
             {k === "steel" && inc.steel && <span className="text-ink-500 truncate">({code})</span>}
             {k === "deflection" && inc.deflection && <span className="text-ink-500">(limits from the Deflection tab)</span>}
+            {k === "boq" && inc.boq && <span className="text-ink-500">(prices from Export → Quantities)</span>}
             {k === "rc" && inc.rc && <span className="text-ink-500">({s.rcOptions.main_grade} / {s.rcOptions.tie_grade}, cover {(s.rcOptions.cover * 100).toFixed(1)} cm)</span>}
           </label>
         ))}

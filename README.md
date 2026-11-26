@@ -253,6 +253,23 @@ The sections a generator gives are **starting sizes, not designed sizes**. You c
   that a group is reported when even the largest size is too small. `tests/test_steel_tables.py` checks every table
   row against its dimensions, the angle principal axes, and the channel and angle checks against hand calculations.
 
+## Quantities and cost (BOQ)
+
+**Export → Quantities and cost (BOQ, Excel)…** (`structural/boq.py`, `POST /api/boq`, `POST /api/boq/xlsx`).
+
+- **Steel:** mass per section = total centre-line length × kg/m. The kg/m is the supplier table's value for a
+  standard size, otherwise area × density. Also shown by size family and by member type (columns, rafters, purlins…).
+- **Concrete members:** volume = area × length (reinforcement and formwork not included).
+- **Allowance (%)** for connections, plates, bolts and waste, and **unit prices** (per kg, optionally per family,
+  and per m³ of concrete) are your own figures. Nothing is assumed: without prices the cost columns stay empty.
+- **Excel:** sheets BOQ, By member type and Members. Mass, allowance and cost are live formulas, so you can change
+  the allowance or a price in Excel.
+- The PDF report has a quantities section (on by default) with the same figures.
+- Not included: slabs, walls, foundations, sheeting, girts that are not in the model, painting, transport, erection.
+- The Excel export needs `openpyxl` (added to `backend/requirements.txt`; `run.bat` / `run.sh` install it).
+- **Tests:** `tests/test_boq.py` (table and area-based kg/m, allowance and prices, concrete volume, the Excel formulas,
+  the API and the report).
+
 ## Wind loads: Thai DPT 1311-50 (low-rise buildings)
 
 **Loads → Wind loads, Thai DPT 1311-50…** (`structural/wind.py`, `POST /api/loads/wind`). It works on any model with

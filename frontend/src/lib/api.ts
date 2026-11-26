@@ -1,4 +1,4 @@
-import type { BucklingResult, WindParams, WindSummary, DeflectionLimits, DeflectionResult, Model, PDeltaResult, RcDesignResult, Results, SteelCatalog, SteelDesignResult, SuggestResult } from "./types";
+import type { BoqOptions, BoqResult, BucklingResult, WindParams, WindSummary, DeflectionLimits, DeflectionResult, Model, PDeltaResult, RcDesignResult, Results, SteelCatalog, SteelDesignResult, SuggestResult } from "./types";
 
 const BASE = (import.meta as unknown as { env: Record<string, string> }).env.VITE_API_URL ?? "";
 
@@ -33,6 +33,7 @@ export interface ReportRequest {
   project?: { title?: string; project?: string; engineer?: string };
   lang?: "en" | "th";
   deflection?: { limits: Partial<DeflectionLimits>; wind_factor: number | null };
+  boq?: BoqOptions;
 }
 
 export const api = {
@@ -47,6 +48,8 @@ export const api = {
     deflection?: { limits: Partial<DeflectionLimits>; wind_factor: number | null }) =>
     post<SuggestResult>("/api/design/steel/suggest", { model, code, target, groups, limit_slenderness,
       ...(deflection ? { check_deflection: true, limits: deflection.limits, wind_factor: deflection.wind_factor } : {}) }),
+  boq: (model: Model, options: BoqOptions) => post<BoqResult>("/api/boq", { model, options }),
+  boqXlsx: (model: Model, options: BoqOptions) => postBlob("/api/boq/xlsx", { model, options }),
   wind: (model: Model, params: Partial<WindParams>) => post<{ model: Model; summary: WindSummary }>("/api/loads/wind", { model, params }),
   deflection: (model: Model, limits: Partial<DeflectionLimits>, wind_factor: number | null) =>
     post<DeflectionResult>("/api/design/deflection", { model, limits, wind_factor }),

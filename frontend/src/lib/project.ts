@@ -1,4 +1,4 @@
-import type { DeflectionLimits, Model } from "./types";
+import type { BoqOptions, DeflectionLimits, Model } from "./types";
 import type { UnitSystem } from "./units";
 
 /** Project file (.sproj): the model plus the user's settings. Results are never saved: they are recalculated. */
@@ -10,6 +10,7 @@ export interface ProjectSettings {
   steelCode?: string;
   rcOptions?: { main_grade: string; tie_grade: string; cover: number };
   deflection?: { limits: Partial<DeflectionLimits>; wind_factor: number | null };
+  boq?: BoqOptions;
   report?: { engineer?: string; project?: string; lang?: "en" | "th" };
 }
 

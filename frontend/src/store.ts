@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { api } from "./lib/api";
 import type { PathDir, TraceResult } from "./lib/loadpath";
 import type { ShellComp } from "./lib/shells";
-import type { BucklingResult, DeflectionLimits, DeflectionResult, ForceComp, Load, Mode, Model, PDeltaResult, RcDesignResult, Results, SteelDesignResult } from "./lib/types";
+import type { BoqOptions, BucklingResult, DeflectionLimits, DeflectionResult, ForceComp, Load, Mode, Model, PDeltaResult, RcDesignResult, Results, SteelDesignResult } from "./lib/types";
 import { U, type UnitSystem } from "./lib/units";
 import { download } from "./lib/download";
 import { projectFile, readProjectFile, safeName } from "./lib/project";
@@ -61,7 +61,8 @@ interface State {
   rcOptions: { main_grade: string; tie_grade: string; cover: number };
   rcBusy: boolean;
   rcError: string | null;
-  dialog: null | "dxf" | "report" | "wind";
+  dialog: null | "dxf" | "report" | "wind" | "boq";
+  boqSettings: BoqOptions;
   reportInfo: { engineer: string; project: string; lang?: "en" | "th" };
   set: (p: Partial<State>) => void;
   setModel: (m: Model, keepResults?: boolean) => void;
@@ -96,7 +97,7 @@ export const useStore = create<State>((set, get) => ({
   showDims: true, labelSize: (() => { try { return Math.min(3, Math.max(0.6, +(localStorage.getItem("labelSize") ?? 1) || 1)); } catch { return 1; } })(),
   hiddenTypes: {}, maxLevel: null, exploded: 0, ortho: false, pathDir: "auto", trace: null, isolated: null,
   bottomTab: "log", log: [], history: [], buckling: null, pdelta: null, bucklingMode: 0, stabBusy: false, stabError: null, steel: null, steelCode: "", steelBusy: false, steelError: null,
-  designTab: "steel", rc: null, rcOptions: { main_grade: "SD40", tie_grade: "SR24", cover: 0.04 }, rcBusy: false, rcError: null, defl: null, deflBusy: false, deflError: null, deflSettings: { limits: {}, wind_factor: null }, dialog: null, reportInfo: { engineer: "", project: "" }, colorTransform: "sqrt", units: (() => { try { return (localStorage.getItem("units") as UnitSystem) || "SI"; } catch { return "SI"; } })(),
+  designTab: "steel", rc: null, rcOptions: { main_grade: "SD40", tie_grade: "SR24", cover: 0.04 }, rcBusy: false, rcError: null, defl: null, deflBusy: false, deflError: null, deflSettings: { limits: {}, wind_factor: null }, boqSettings: { allowance: 0, currency: "THB", prices: {}, concrete_price: null }, dialog: null, reportInfo: { engineer: "", project: "" }, colorTransform: "sqrt", units: (() => { try { return (localStorage.getItem("units") as UnitSystem) || "SI"; } catch { return "SI"; } })(),
   set: (p) => set(p),
   setModel: (m, keepResults = false) => set({ ...NO_STAB, model: m, results: keepResults ? get().results : null, resultsStale: false, trace: null, selection: null }),
   editModel: (fn) => {
@@ -214,10 +215,10 @@ export const useStore = create<State>((set, get) => ({
     }
   },
   saveProject: () => {
-    const { model, units, steelCode, rcOptions, reportInfo, log, deflSettings } = get();
+    const { model, units, steelCode, rcOptions, reportInfo, log, deflSettings, boqSettings } = get();
     if (!model) return;
     const name = `${safeName(model.name)}.sproj`;
-    download(name, projectFile(model, { units, steelCode, rcOptions, report: reportInfo, deflection: deflSettings }));
+    download(name, projectFile(model, { units, steelCode, rcOptions, report: reportInfo, deflection: deflSettings, boq: boqSettings }));
     set({ log: [...log, `Project saved as ${name} (model and settings; results are recalculated after opening).`] });
   },
   openProject: (text, fileName) => {
@@ -230,6 +231,7 @@ export const useStore = create<State>((set, get) => ({
         ...(settings.steelCode != null ? { steelCode: settings.steelCode } : {}),
         ...(settings.rcOptions ? { rcOptions: settings.rcOptions } : {}),
         deflSettings: settings.deflection ?? { limits: {}, wind_factor: null },
+        boqSettings: settings.boq ?? { allowance: 0, currency: "THB", prices: {}, concrete_price: null },
         reportInfo: { engineer: settings.report?.engineer ?? "", project: settings.report?.project ?? "", lang: settings.report?.lang },
         log: [...get().log, `Opened ${fileName}: "${model.name}", ${model.elements.length} members, ${model.nodes.length} nodes${savedAt ? ` (saved ${new Date(savedAt).toLocaleString()})` : ""}. Run the analysis to calculate results.`],
       });

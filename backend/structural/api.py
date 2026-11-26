@@ -129,6 +129,30 @@ def run_wind(req: dict):
         raise HTTPException(400, f"Wind loads could not be generated: {exc}") from exc
 
 
+@app.post("/api/boq")
+def run_boq(req: dict):
+    """{"model": {...}, "options": {"allowance": 0, "currency": "THB", "prices": {"steel" | family: price per kg},
+    "concrete_price": price per m3}} -> quantities by section, family and member type"""
+    from .boq import quantities
+    try:
+        return _r(quantities(req["model"], req.get("options") or {}))
+    except (KeyError, ValueError, IndexError, TypeError) as exc:
+        raise HTTPException(400, f"Quantities could not be calculated: {exc}") from exc
+
+
+@app.post("/api/boq/xlsx")
+def run_boq_xlsx(req: dict):
+    """Same request as /api/boq; returns an Excel workbook with live formulas."""
+    from .boq import boq_xlsx
+    try:
+        data = boq_xlsx(req["model"], req.get("options") or {})
+    except (KeyError, ValueError, IndexError, TypeError) as exc:
+        raise HTTPException(400, f"Quantities could not be calculated: {exc}") from exc
+    name = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in (req["model"].get("name") or "model"))[:60]
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{name}-BOQ.xlsx"'})
+
+
 @app.get("/api/sections/catalog")
 def section_catalog():
     """Standard steel section sizes (nominal dimensions in m, area in m², mass in kg/m)."""
@@ -179,7 +203,8 @@ def make_report(req: dict):
     try:
         pdf = build_report(req["model"], req.get("include"), req.get("steel_code") or None, req.get("rc_options"),
                            req.get("image"), req.get("stability_load") or None, req.get("project"),
-                           lang=req.get("lang") or "en", deflection=req.get("deflection") or None)
+                           lang=req.get("lang") or "en", deflection=req.get("deflection") or None,
+                           boq=req.get("boq") or None)
     except (ModelError, ReportError) as exc:
         raise HTTPException(422, str(exc)) from exc
     except (KeyError, ValueError, IndexError, TypeError) as exc:

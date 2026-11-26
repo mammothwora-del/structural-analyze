@@ -187,6 +187,21 @@ TH: dict[str, str] = {
     "Design notes and assumptions": "หมายเหตุและสมมติฐานการออกแบบ",
     "({k} members)": "({k} องค์อาคาร)",
     "({k} member)": "({k} องค์อาคาร)",
+    # quantities
+    "Quantities could not be calculated: {e}": "คำนวณปริมาณไม่ได้: {e}",
+    "Quantities and cost": "ปริมาณวัสดุและราคา",
+    "Steel": "เหล็ก",
+    "Description": "รายละเอียด",
+    "Length (m)": "ความยาว (ม.)",
+    "Mass (kg)": "น้ำหนัก (กก.)",
+    "With allowance (kg)": "รวมเผื่อ (กก.)",
+    "Cost ({c})": "ราคา ({c})",
+    "Total": "รวม",
+    "Concrete members": "องค์อาคารคอนกรีต",
+    "Volume (m³)": "ปริมาตร (ลบ.ม.)",
+    "Steel by member type": "น้ำหนักเหล็กตามประเภทองค์อาคาร",
+    "Member type": "ประเภทองค์อาคาร",
+    "Quantity notes": "หมายเหตุปริมาณวัสดุ",
     # wind
     "Wind loads: DPT 1311-50, low-rise method": "แรงลม: มยผ. 1311-50 วิธีสำหรับอาคารเตี้ย",
     "WIND_PARAMS": "พื้นที่ความเร็วลมกลุ่ม {zone} สภาพภูมิประเทศแบบ {exp} หน่วยแรงลมภายในกรณี {cat}: V = {V} ม./วินาที, q = {q} kN/m², "
