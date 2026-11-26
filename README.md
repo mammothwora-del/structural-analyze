@@ -225,6 +225,7 @@ The sections a generator gives are **starting sizes, not designed sizes**. You c
     that comes back to a size it had before (a lighter but stiffer size attracts more force) only moves up from then
     on, so the passes settle.
   - Optionally, slenderness is limited to KL/r ≤ 200 in compression and L/r ≤ 300 in tension (AISC 360-16 user notes).
+  - Optionally, the sizes also meet the **deflection and drift limits** set in the Deflection tab (see below).
   - *Apply and re-design* puts the sizes in the model.
 - **Standard sizes** (`structural/steel_catalog.py`, 324 sizes):
   - **Supplier tables** (`structural/steel_tables.py`, 293 sizes from a Thai supplier's catalogue): H sections,
@@ -245,12 +246,89 @@ The sections a generator gives are **starting sizes, not designed sizes**. You c
   - Members are analysed through the centroid; torsion from loads off the shear centre is not checked.
 - **Lip channels** (cold-formed) are used in the analysis only: AISI S100 / EN 1993-1-3 are not implemented, so they
   are reported as not covered and Suggest sizes does not pick them.
-- Suggested sizes cover only the implemented strength checks. Deflection, vibration, connections and the other items
-  in the design notes are not part of the sizing.
+- Suggested sizes cover the implemented strength checks, and deflection and drift when that option is ticked.
+  Vibration, connections and the other items in the design notes are not part of the sizing.
 - **Tests:** `tests/test_steel_sizing.py`. They check that the final check passes and equals a normal design run, that
   one size lighter fails, that locking, family changes and the target work, that the slenderness limits hold, and
   that a group is reported when even the largest size is too small. `tests/test_steel_tables.py` checks every table
   row against its dimensions, the angle principal axes, and the channel and angle checks against hand calculations.
+
+## Quantities and cost (BOQ)
+
+**Export → Quantities and cost (BOQ, Excel)…** (`structural/boq.py`, `POST /api/boq`, `POST /api/boq/xlsx`).
+
+- **Steel:** mass per section = total centre-line length × kg/m. The kg/m is the supplier table's value for a
+  standard size, otherwise area × density. Also shown by size family and by member type (columns, rafters, purlins…).
+- **Concrete members:** volume = area × length (reinforcement and formwork not included).
+- **Allowance (%)** for connections, plates, bolts and waste, and **unit prices** (per kg, optionally per family,
+  and per m³ of concrete) are your own figures. Nothing is assumed: without prices the cost columns stay empty.
+- **Excel:** sheets BOQ, By member type and Members. Mass, allowance and cost are live formulas, so you can change
+  the allowance or a price in Excel.
+- The PDF report has a quantities section (on by default) with the same figures.
+- Not included: slabs, walls, foundations, sheeting, girts that are not in the model, painting, transport, erection.
+- The Excel export needs `openpyxl` (added to `backend/requirements.txt`; `run.bat` / `run.sh` install it).
+- **Tests:** `tests/test_boq.py` (table and area-based kg/m, allowance and prices, concrete volume, the Excel formulas,
+  the API and the report).
+
+## Wind loads: Thai DPT 1311-50 (low-rise buildings)
+
+**Loads → Wind loads, Thai DPT 1311-50…** (`structural/wind.py`, `POST /api/loads/wind`). It works on any model with
+columns, such as a warehouse, a portal frame or a low building.
+
+- **Inputs:** wind zone (1, 2, 3, 4A, 4B), importance (Iw), exposure A or B, internal pressure category, and the
+  ridge direction and roof slope (both read from the model unless you set them). The dialog shows q, Ce, h, the end
+  zones and the pressure of every zone before anything is added.
+- **Method (simplified procedure, Appendix ข.1):**
+  - q = ½·1.25·V². Strength uses V = TF·V50 (TF for zones 4A and 4B, can be switched off), serviceability uses V50.
+  - Ce at h, the mid-height of the roof (at least 6 m; the eave height when the slope is below 7°).
+  - CpCg from Figure ข.1, interpolated for the roof slope: load case 1 (wind across the ridge) and case 2 (along it),
+    with the end zones 1E to 6E.
+  - Internal pressure Cpi with Cgi = 2.0: each direction is added once with the highest and once with the lowest Cpi.
+- **Load cases:** 4 directions × 2 internal pressures = 8 cases (16 with "all corners"). The old simplified wind
+  case is replaced. The TH2 / TH3 combinations (or the EN / ASCE wind combinations) are made once per wind case.
+  The deflection check takes each wind case × (serviceability ÷ strength pressure), 0.75 for normal importance.
+- **How the pressures reach the frame (ASSUMED):** walls span horizontally to the columns in the wall plane
+  (tributary width), and roof sheeting spans to the purlins (half the distance to the neighbours along the slope,
+  normal to the roof). The gable triangle above the eave is lumped at the end-frame roof nodes. A flat roof with slab
+  panels gets area loads. Check the resultants in the dialog against your own estimate.
+- **Scope:** h ≤ 23 m and h/Ds < 1, otherwise refused (use the detailed procedure). Not included: cladding pressures
+  (Figures ข.2, ข.3), hills, dynamic effects, canopies and open structures, and special multi-span coefficients (the
+  windward roof zone runs from the windward eave to the first ridge).
+- Values were taken from the published DPT 1311-50 text (Tables 2-2, 2-3, Appendix ก, Figure ข.1 tables). The zone
+  layout of Figure ข.1 is the standard one for this method (1/4 walls, 2/3 roof, 5/6 end walls in case 2). The end-wall
+  strips 5E / 6E are taken as width z at the corner side; check this against the figure in your copy.
+- **Tests:** `tests/test_wind.py`: q, Ce and CpCg values, a portal warehouse whose force resultants equal a hand
+  calculation (and equal the reactions), cases and combinations, scope limits, the API and the report.
+
+## Deflection and drift (serviceability)
+
+Design mode, **Deflection** tab (`structural/serviceability.py`, `POST /api/design/deflection`).
+
+- **What is checked:**
+  - **Beam spans.** Beam members joined end to end in nearly the same line (less than 35° apart, so a pitched rafter
+    runs eave to eave) with the same role form one span. A span ends at a support, a column, a truss, or where the
+    beam does not simply continue. Deflection is measured perpendicular to the line between the span's ends, with the
+    end movements subtracted. A span with a free end is a **cantilever**: tip deflection against 2L.
+  - **Trusses** in one vertical plane: vertical deflection of each node relative to the supports on either side of
+    it (nodes on a column or a support), over that span. Space trusses and lattice shells are listed as not checked.
+  - **Storey drift:** stacked columns split at each level. Relative horizontal movement of the two ends over the height.
+- **Combinations** (unfactored): the model's SLS combinations, or D + L when there are none (total); live load alone
+  (live); each wind case alone times a factor (1.0 by default, 0.6 for ASCE 7 because its wind is strength level).
+- **Default limits (ASSUMED, editable):** floors L/360 live and L/240 total; roof members (purlins, rafters, eave
+  struts, trusses) L/240 live or wind and L/180 total (IBC 2018 Table 1604.3, non-plaster ceiling); drift H/400 with
+  2 or more levels and H/200 for single-storey frames (common practice, AISC Design Guide 3). Change them to the
+  project's requirements; they are saved in the project file.
+- The members are coloured by deflection / limit. Click a row to select the members of that span.
+- **Not checked:** seismic drift (Cd × elastic drift), vibration, ponding, and long-term concrete deflection (cracking
+  and creep). Deflections use gross section properties.
+- **Suggest sizes with deflection:** a span over its limit asks each section in it for at least
+  (current stiffness × ratio): the moment of inertia about the bending axis for beams and drift, the area for truss
+  members. That scaling is approximate, so the sizing repeats with fresh analyses, and the result shown is a full
+  check of the final sizes. Drift sizing raises column stiffness only.
+- The PDF report has a deflection section (on by default) with the limits and the worst 60 items.
+- **Tests:** `tests/test_serviceability.py`: simply supported beam 5wL⁴/384EI, settlement subtracted, cantilever
+  PL³/3EI against 2L, portal drift and the wind factor, storey drift in a building, truss deflection, the API, sizing
+  for deflection, and the report section in English and Thai.
 
 ## RC beam and column design (Thai EIT 1008-38)
 

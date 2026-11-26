@@ -28,10 +28,11 @@ from reportlab.platypus import (Image, KeepTogether, PageBreak, Paragraph, Simpl
 from .analysis import analyze
 from .sections import MATERIALS, section_properties
 from .report_i18n import TH, check_name_th, rebar_th, thai_date
+from .serviceability import DEFAULT_LIMITS as DEFL_DEFAULTS
 from .steel_design import combine_member, design_combinations
 
 INCLUDE_DEFAULTS = {"model": True, "loads": True, "analysis": True, "members": True, "stability": False,
-                    "steel": True, "rc": True}
+                    "steel": True, "rc": True, "deflection": True, "boq": True}
 QTY = ("N", "Vy", "Vz", "T", "My", "Mz")
 QTY_UNIT = {"N": "kN", "Vy": "kN", "Vz": "kN", "T": "kN·m", "My": "kN·m", "Mz": "kN·m"}
 UNIT = {"force": "kN", "moment": "kN·m", "ratio": ""}
@@ -325,21 +326,22 @@ def _member_envelope(model, res, loads):
 # ---------------------------------------------------------------------------------------------------------------
 def build_report(model: dict, include: dict | None = None, steel_code: str | None = None, rc_options: dict | None = None,
                  image_png: str | None = None, stability_load: str | None = None, project: dict | None = None,
-                 lang: str = "en") -> bytes:
+                 lang: str = "en", deflection: dict | None = None, boq: dict | None = None) -> bytes:
     """Return the PDF bytes. ``image_png`` is an optional base64 PNG (data URL or raw) of the 3D view.
-    ``lang`` "en" or "th" (Thai headings, tables and notes; numbers and clause references unchanged)."""
+    ``lang`` "en" or "th" (Thai headings, tables and notes; numbers and clause references unchanged).
+    ``deflection``: {"limits": {...}, "wind_factor": ...} for the deflection and drift section."""
     if lang not in LANGS:
         raise ReportError(f"unknown report language {lang!r} (use 'en' or 'th')")
     if lang == "th":
         _register_thai()
     token = _LANG.set(lang)
     try:
-        return _build(model, include, steel_code, rc_options, image_png, stability_load, project)
+        return _build(model, include, steel_code, rc_options, image_png, stability_load, project, deflection or {}, boq or {})
     finally:
         _LANG.reset(token)
 
 
-def _build(model, include, steel_code, rc_options, image_png, stability_load, project) -> bytes:
+def _build(model, include, steel_code, rc_options, image_png, stability_load, project, defl_opt, boq_opt) -> bytes:
     inc = {**INCLUDE_DEFAULTS, **(include or {})}
     project = project or {}
     st = _styles()
@@ -352,7 +354,7 @@ def _build(model, include, steel_code, rc_options, image_png, stability_load, pr
     now = dt.datetime.now()
     loads = _loads(model)
     combos, _ = design_combinations(model)
-    steel = rc = buck = None
+    steel = rc = buck = defl = None
     errors = []
     has_steel = any(mats.get(model["sections"].get(e["section"], {}).get("material", ""), {}).get("kind") == "steel"
                     for e in model["elements"])
@@ -370,6 +372,12 @@ def _build(model, include, steel_code, rc_options, image_png, stability_load, pr
             rc = rc_design(model, rc_options or {}, results=res)
         except (ValueError, KeyError) as exc:
             errors.append(tr("RC design could not run: {e}", e=exc))
+    if inc["deflection"]:
+        from .serviceability import deflection_checks
+        try:
+            defl = deflection_checks(model, res, defl_opt.get("limits") or None, defl_opt.get("wind_factor"))
+        except (ValueError, KeyError) as exc:
+            errors.append(tr("Deflection check could not run: {e}", e=exc))
     if inc["stability"]:
         from .stability import buckling
         load = stability_load or (combos[0][0] if combos else (loads[0][0] if loads else None))
@@ -467,6 +475,16 @@ def _build(model, include, steel_code, rc_options, image_png, stability_load, pr
             rows.append([c["id"], Paragraph(_esc(c.get("name", "")), st["cell"]), c.get("type", ""),
                          tr("yes") if c.get("self_weight") else "", str(n_loads.get(c["id"], 0) + n_area.get(c["id"], 0))])
         d.add(_table(rows, widths=[16 * mm, 80 * mm, 22 * mm, 22 * mm, 26 * mm]))
+        wd = model.get("wind")
+        if wd:
+            wp = wd.get("params", {})
+            d.h2(tr("Wind loads: DPT 1311-50, low-rise method"), "CALCULATED")
+            d.p(_esc(tr("WIND_PARAMS", "Zone {zone}, exposure {exp}, internal pressure category {cat}: V = {V} m/s, q = {q} kN/m², "
+                        "Iw = {iw}, Ce = {ce} at h = {h} m, roof slope {slope}°, end zone y = {y} m, edge strip z = {z} m. "
+                        "p = Iw·q·Ce·(CpCg − 2.0·Cpi) with CpCg from Figure ข.1. Serviceability: {sls} × each wind case.",
+                        zone=wp.get("zone", ""), exp=wp.get("exposure", ""), cat=wp.get("internal", ""), V=_f(wd.get("V"), 1),
+                        q=_f(wd.get("q"), 3), iw=_f(wd.get("Iw"), 2), ce=_f(wd.get("Ce"), 3), h=_f(wd.get("h")),
+                        slope=_f(wd.get("slope"), 1), y=_f(wd.get("y_end")), z=_f(wd.get("z_edge")), sls=_f(wd.get("sls_factor"), 3))), "small")
         d.h2(tr("Load combinations"))
         rows = [[tr("Id"), tr("Name"), tr("Factors"), tr("Used for design")]]
         ids = {c for c, _ in combos}
@@ -629,13 +647,86 @@ def _build(model, include, steel_code, rc_options, image_png, stability_load, pr
         _detail_tables(d, rc, st)
         _design_notes(d, rc)
 
+    if defl and defl["items"]:
+        d.story.append(PageBreak())
+        d.h1(tr("Deflection and drift (serviceability)"), "CALCULATED")
+        lim = defl["limits"]
+        changed = any(lim[k] != v for k, v in DEFL_DEFAULTS.items())
+        d.p(_esc(tr("DEFL_LIMITS", "Limits: floors L/{fl} live, L/{ft} total; roof members L/{rl} live or wind, L/{rt} total; "
+                    "cantilevers use 2L; storey drift H/{dr}.", fl=_f(lim["floor_live"], 0), ft=_f(lim["floor_total"], 0),
+                    rl=_f(lim["roof_live"], 0), rt=_f(lim["roof_total"], 0), dr=_f(defl["drift_limit"], 0)))
+            + " " + _tag("INPUT" if changed else "ASSUMED"), "small")
+        d.p(tr("Combinations used: {c}.", c=_esc(", ".join(f"{c['id']} ({c['name']})" for c in defl["combinations"]))), "muted")
+        s = defl["summary"]
+        d.add(_table([[tr(h) for h in ("Checked", "Within the limit", "Over the limit", "Max deflection / limit")],
+                      [str(s["n"]), str(s["ok"]), str(s["fail"]), _f(s.get("max_util"))]],
+                     widths=[30 * mm] * 4, align_right_from=0))
+        kind = {"beam": "span", "cantilever": "cantilever", "truss": "truss", "drift": "storey drift"}
+        rows = [[tr(h) for h in ("Item", "Members", "Type", "L or H (m)", "δ (mm)", "Allowed (mm)", "Limit", "Combo", "Ratio", "Status")]]
+        shown = defl["items"][:60]
+        for it in shown:
+            mem = ", ".join(it["elements"][:3]) + (f" +{len(it['elements']) - 3}" if len(it["elements"]) > 3 else "")
+            rows.append([it["id"], Paragraph(_esc(mem), st["cell"]), Paragraph(_esc(f"{it['role']} {tr(kind[it['kind']])}"), st["cell"]),
+                         _f(it["L"]), _f(it["delta"] * 1000, 1), _f(it["allow"] * 1000, 1),
+                         Paragraph(_esc(it["limit"]), st["cell"]), it["combo"], _f(it["util"]), _status(it["status"])])
+        d.add(_table(rows, widths=[10 * mm, 30 * mm, 26 * mm, 14 * mm, 13 * mm, 15 * mm, 22 * mm, 14 * mm, 11 * mm, 17 * mm],
+                     align_right_from=3, styles_extra=[("ALIGN", (6, 0), (7, -1), "LEFT")] + _status_styles(rows)))
+        if len(defl["items"]) > len(shown):
+            d.p(tr("… and {n} more.", n=len(defl["items"]) - len(shown)), "muted")
+        d.h2(tr("Deflection notes and assumptions"), "ASSUMED")
+        d.bullets(list(defl["notes"]))
+
+    if inc["boq"]:
+        from .boq import quantities
+        try:
+            qb = quantities(model, boq_opt)
+        except (ValueError, KeyError) as exc:
+            qb = None
+            errors.append(tr("Quantities could not be calculated: {e}", e=exc))
+        if qb and qb["rows"]:
+            cur = qb["currency"]
+            d.story.append(PageBreak())
+            d.h1(tr("Quantities and cost"), "CALCULATED")
+            steel_rows = [x for x in qb["rows"] if x["kind"] == "steel"]
+            if steel_rows:
+                d.h2(tr("Steel"))
+                rows = [[tr(h) for h in ("Section", "Description", "Members", "Length (m)", "kg/m", "Mass (kg)")]
+                        + [tr("With allowance (kg)"), tr("Cost ({c})", c=cur)]]
+                for x in steel_rows:
+                    rows.append([x["section"], Paragraph(_esc(x["description"]), st["cell"]), str(x["n"]), _f(x["length"], 1),
+                                 _f(x["kg_per_m"]), _f(x["mass"], 0), _f(x["mass_total"], 0),
+                                 _f(x["cost"], 0) if x["cost"] is not None else "–"])
+                t = qb["totals"]
+                fam_cost = [x["cost"] for x in steel_rows if x["cost"] is not None]
+                rows.append([tr("Total"), "", str(sum(x["n"] for x in steel_rows)), _f(t["steel_length"], 1), "",
+                             _f(t["steel_mass"], 0), _f(t["steel_mass_total"], 0), _f(sum(fam_cost), 0) if fam_cost else "–"])
+                d.add(_table(rows, widths=[16 * mm, 42 * mm, 15 * mm, 19 * mm, 15 * mm, 20 * mm, 22 * mm, 23 * mm], align_right_from=2,
+                             styles_extra=[("FONT", (0, len(rows) - 1), (-1, len(rows) - 1), _FB(), 7.5 if _th() else 7)]))
+            conc = [x for x in qb["rows"] if x["kind"] == "concrete"]
+            if conc:
+                d.h2(tr("Concrete members"))
+                rows = [[tr("Section"), tr("Description"), tr("Members"), tr("Length (m)"), tr("Volume (m³)"), tr("Cost ({c})", c=cur)]]
+                for x in conc:
+                    rows.append([x["section"], Paragraph(_esc(x["description"]), st["cell"]), str(x["n"]), _f(x["length"], 1),
+                                 _f(x["volume"], 2), _f(x["cost"], 0) if x["cost"] is not None else "–"])
+                d.add(_table(rows, widths=[18 * mm, 50 * mm, 18 * mm, 22 * mm, 24 * mm, 26 * mm], align_right_from=2))
+            if qb["by_type"]:
+                d.h2(tr("Steel by member type"))
+                rows = [[tr("Member type"), tr("Length (m)"), tr("Mass (kg)")]] + [
+                    [t["role"], _f(t["length"], 1), _f(t["mass"], 0)] for t in qb["by_type"]]
+                d.add(_table(rows, widths=[40 * mm, 25 * mm, 25 * mm], align_right_from=1))
+            d.h2(tr("Quantity notes"), "ASSUMED")
+            d.bullets(qb["notes"])
+
     # ------------------------------------------------------------------ closing
     d.h1(tr("Limitations"))
     d.bullets([tr(x) for x in (
         "The analysis is linear elastic. Second-order effects are included only where a P-Delta load is listed.",
         "Member design covers only the checks listed in the tables; members marked NOT COVERED or skipped must be checked by hand.",
-        "Connections, base plates, foundations, punching shear, slabs, walls, fatigue, fire, serviceability limits "
-        "(deflection, vibration) and detailing (anchorage, laps, curtailment) are not checked by this report.",
+        ("Connections, base plates, foundations, punching shear, slabs, walls, fatigue, fire, vibration and detailing "
+         "(anchorage, laps, curtailment) are not checked by this report." if defl else
+         "Connections, base plates, foundations, punching shear, slabs, walls, fatigue, fire, serviceability limits "
+         "(deflection, vibration) and detailing (anchorage, laps, curtailment) are not checked by this report."),
         "Default sections, effective lengths and supports chosen by a generator or by the DXF import are assumptions: "
         "replace them with the project values before relying on the results.",
         "This report does not state that the structure is safe or code-compliant.",

@@ -115,6 +115,13 @@ The integrated values at end j are checked against the FE nodal solution (`end_c
 | RC beam and column reinforcement (EIT 1008-38 / ACI 318-95) | Calculated for the listed clauses (verified against hand calculations); members outside them reported **not covered** |
 | RC column slenderness | **Assumed** nonsway (braced), k = 1.0, Lu = member length |
 | RC deflection, cracking, anchorage, joints, seismic detailing, slabs, walls, footings | **Not** designed |
+| Deflection of beam spans, cantilevers and planar trusses; storey drift | Calculated (linear, gross sections; verified against 5wL⁴/384EI, PL³/3EI) |
+| Deflection and drift limits (L/360, L/240, L/180, H/400, H/200) and the wind factor for deflection | **Assumed** defaults, editable |
+| Seismic drift, vibration, ponding, long-term concrete deflection | **Not** checked |
+| Wind pressures, DPT 1311-50 low-rise method (q, Iw, Ce, CpCg Figure ข.1, Cpi) | Calculated from the standard's values (resultants verified by hand calculation) |
+| Wind load path to the frame (walls to columns, sheeting to purlins), zone 5E/6E strip width | **Assumed** |
+| Steel mass and concrete volume of the members (BOQ) | Calculated (centre-line lengths; table kg/m or area × density) |
+| BOQ allowance and unit prices | **Input** by the user; none assumed |
 
 ## Steel design (`structural/steel_design.py`)
 * Design forces: linear superposition of the load-case results for each ultimate combination (combinations whose id
@@ -146,8 +153,35 @@ The integrated values at end j are checked against the FE nodal solution (`end_c
 * Repeat: analyse, size every group, until no group changes (at most 6 passes). A group that returns to a size it had
   in an earlier pass only moves to heavier sizes from then on (it keeps its current size while that still passes). The final model is then analysed and
   checked by `steel_design()`. Only that result is reported, as **calculated**.
-* A group where even the largest size fails keeps the largest size and is flagged. Deflection is not a sizing
-  criterion.
+* A group where even the largest size fails keeps the largest size and is flagged.
+* With `check_deflection`, every pass also runs `deflection_checks()`. A span or storey with ratio r > 1 sets, for each
+  section in it, a minimum of r × the current Iy or Iz (the axis of the deflection) or A (trusses). Candidates below it
+  are skipped. The final deflection check of the final model is reported.
+
+## Wind loads (`structural/wind.py`)
+* u = across the ridge, v = along it. Walls: column lines in the planes u = min/max, v = min/max of the model. Each
+  column line carries ∫p over its tributary strip along the wall (kN/m), as a uniform load on every column element of
+  the line, directed inwards for positive p. Roof: purlin lines (role purlin; eave struts when there are none) on the
+  upper roof profile; each carries two half strips (to the neighbour on each side), each with its own normal and zone.
+  Several purlin lines at one position (two trusses meeting) share the strip.
+* Sign: p > 0 towards the surface. Net p = Iw·q·Ce(h)·(CpCg − 2.0·Cpi).
+* Case 1 W1/W2: wind ±u, end zones at v = min (W1) or v = max (W2). Case 2: wind ±v, end zones at the windward gable,
+  zones 1/2 on the reference-corner side (u = min for +v, u = max for −v). "All corners" adds the mirrored variants.
+* Load cases carry `sls_factor` = 0.75 / Iw / TF² (serviceability pressure / strength pressure), used by
+  `sls_combinations` unless a wind factor is given.
+
+## Deflection and drift (`structural/serviceability.py`)
+* Beam span: chain of `type: beam` elements (roles rib, ring, arch, longitudinal, diagonal, lattice excluded) with the
+  same role, turning less than 35° at each node; stops at a vertical support (one that restrains uz; lateral
+  restraints do not count), at a node with a column or truss member, or at a branch. Deflection at every result
+  station = displacement − linear interpolation of the end displacements (cantilever: − root displacement), component
+  perpendicular to the chord. Axis "y" (bending about local y, Iy) when the local-z component dominates.
+* Truss: connected `type: truss` elements; planar when the plan offset from the principal line is ≤ max(5 % of the
+  length, 0.3 m). Vertical deflection relative to the bracketing supports, limit on that support-to-support span.
+* Drift: collinear column stacks (within 10°), split at the highest node of each level. Horizontal relative
+  displacement / height. Multi-storey (any column with level ≥ 2): drift_multi, otherwise drift_single.
+* Limits: "total" combinations use the total limit; "live" the live limit; "wind" the live limit for roof members only
+  (roles purlin, eave, rafter, girt, roof beam, and trusses). Drift uses every serviceability combination.
 
 ## Project files, DXF import and PDF report
 

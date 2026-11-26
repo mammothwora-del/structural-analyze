@@ -1,4 +1,4 @@
-import type { BucklingResult, Model, PDeltaResult, RcDesignResult, Results, SteelCatalog, SteelDesignResult, SuggestResult } from "./types";
+import type { BoqOptions, BoqResult, BucklingResult, WindParams, WindSummary, DeflectionLimits, DeflectionResult, Model, PDeltaResult, RcDesignResult, Results, SteelCatalog, SteelDesignResult, SuggestResult } from "./types";
 
 const BASE = (import.meta as unknown as { env: Record<string, string> }).env.VITE_API_URL ?? "";
 
@@ -32,6 +32,8 @@ export interface ReportRequest {
   image?: string;
   project?: { title?: string; project?: string; engineer?: string };
   lang?: "en" | "th";
+  deflection?: { limits: Partial<DeflectionLimits>; wind_factor: number | null };
+  boq?: BoqOptions;
 }
 
 export const api = {
@@ -42,8 +44,15 @@ export const api = {
   pdelta: async (model: Model, load: string, n_seg = 2) =>
     ({ ...(await post<Omit<PDeltaResult, "kind">>("/api/stability", { model, load, kind: "pdelta", n_seg })), kind: "pdelta" as const }),
   steelDesign: (model: Model, code?: string) => post<SteelDesignResult>("/api/design/steel", { model, code }),
-  suggestSteel: (model: Model, code: string | undefined, target: number, groups: Record<string, string>, limit_slenderness = true) =>
-    post<SuggestResult>("/api/design/steel/suggest", { model, code, target, groups, limit_slenderness }),
+  suggestSteel: (model: Model, code: string | undefined, target: number, groups: Record<string, string>, limit_slenderness = true,
+    deflection?: { limits: Partial<DeflectionLimits>; wind_factor: number | null }) =>
+    post<SuggestResult>("/api/design/steel/suggest", { model, code, target, groups, limit_slenderness,
+      ...(deflection ? { check_deflection: true, limits: deflection.limits, wind_factor: deflection.wind_factor } : {}) }),
+  boq: (model: Model, options: BoqOptions) => post<BoqResult>("/api/boq", { model, options }),
+  boqXlsx: (model: Model, options: BoqOptions) => postBlob("/api/boq/xlsx", { model, options }),
+  wind: (model: Model, params: Partial<WindParams>) => post<{ model: Model; summary: WindSummary }>("/api/loads/wind", { model, params }),
+  deflection: (model: Model, limits: Partial<DeflectionLimits>, wind_factor: number | null) =>
+    post<DeflectionResult>("/api/design/deflection", { model, limits, wind_factor }),
   catalog: async (): Promise<SteelCatalog> => {
     const r = await fetch(`${BASE}/api/sections/catalog`);
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);

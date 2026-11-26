@@ -86,15 +86,71 @@ def run_steel_design(req: dict):
 @app.post("/api/design/steel/suggest")
 def run_steel_suggest(req: dict):
     """{"model": {...}, "code": ..., "target": 1.0, "groups": {"COL": "keep" | "lock" | "H" | "SHS" | "RHS" | "CHS"},
-    "limit_slenderness": true}"""
+    "limit_slenderness": true, "check_deflection": false, "limits": {...}, "wind_factor": null}"""
     from .steel_sizing import suggest_sections
     try:
         return _r(suggest_sections(req["model"], req.get("code") or None, float(req.get("target") or 1.0), req.get("groups") or {},
-                                   limit_slenderness=bool(req.get("limit_slenderness", True))))
+                                   limit_slenderness=bool(req.get("limit_slenderness", True)),
+                                   check_deflection=bool(req.get("check_deflection", False)),
+                                   deflection_limits=req.get("limits") or None,
+                                   wind_factor=_opt_float(req.get("wind_factor"))))
     except ModelError as exc:
         raise HTTPException(422, str(exc)) from exc
     except (KeyError, ValueError, IndexError, TypeError) as exc:
         raise HTTPException(400, f"Invalid request: {exc}") from exc
+
+
+def _opt_float(v):
+    return None if v in (None, "") else float(v)
+
+
+@app.post("/api/design/deflection")
+def run_deflection(req: dict):
+    """{"model": {...}, "limits": {"floor_live": 360, "floor_total": 240, "roof_live": 240, "roof_total": 180,
+    "drift_multi": 400, "drift_single": 200}, "wind_factor": 1.0}  (limits as L/n; all optional)"""
+    from .serviceability import deflection_checks
+    try:
+        return _r(deflection_checks(req["model"], None, req.get("limits") or None, _opt_float(req.get("wind_factor"))))
+    except ModelError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except (KeyError, ValueError, IndexError, TypeError) as exc:
+        raise HTTPException(400, f"Invalid request: {exc}") from exc
+
+
+@app.post("/api/loads/wind")
+def run_wind(req: dict):
+    """{"model": {...}, "params": {"zone": "1"|"2"|"3"|"4A"|"4B", "importance": "low"|"normal"|"high"|"very_high",
+    "exposure": "A"|"B", "internal": "1"|"2"|"3", "use_tf": true, "ridge": "auto"|"x"|"y", "roof_slope": null,
+    "all_corners": false, "replace": true}} -> {"model", "summary"} (DPT 1311-50 low-rise method)"""
+    from .wind import generate_wind
+    try:
+        return _r(generate_wind(req["model"], req.get("params") or {}))
+    except (KeyError, ValueError, IndexError, TypeError) as exc:
+        raise HTTPException(400, f"Wind loads could not be generated: {exc}") from exc
+
+
+@app.post("/api/boq")
+def run_boq(req: dict):
+    """{"model": {...}, "options": {"allowance": 0, "currency": "THB", "prices": {"steel" | family: price per kg},
+    "concrete_price": price per m3}} -> quantities by section, family and member type"""
+    from .boq import quantities
+    try:
+        return _r(quantities(req["model"], req.get("options") or {}))
+    except (KeyError, ValueError, IndexError, TypeError) as exc:
+        raise HTTPException(400, f"Quantities could not be calculated: {exc}") from exc
+
+
+@app.post("/api/boq/xlsx")
+def run_boq_xlsx(req: dict):
+    """Same request as /api/boq; returns an Excel workbook with live formulas."""
+    from .boq import boq_xlsx
+    try:
+        data = boq_xlsx(req["model"], req.get("options") or {})
+    except (KeyError, ValueError, IndexError, TypeError) as exc:
+        raise HTTPException(400, f"Quantities could not be calculated: {exc}") from exc
+    name = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in (req["model"].get("name") or "model"))[:60]
+    return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{name}-BOQ.xlsx"'})
 
 
 @app.get("/api/sections/catalog")
@@ -147,7 +203,8 @@ def make_report(req: dict):
     try:
         pdf = build_report(req["model"], req.get("include"), req.get("steel_code") or None, req.get("rc_options"),
                            req.get("image"), req.get("stability_load") or None, req.get("project"),
-                           lang=req.get("lang") or "en")
+                           lang=req.get("lang") or "en", deflection=req.get("deflection") or None,
+                           boq=req.get("boq") or None)
     except (ModelError, ReportError) as exc:
         raise HTTPException(422, str(exc)) from exc
     except (KeyError, ValueError, IndexError, TypeError) as exc:

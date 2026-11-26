@@ -14,7 +14,7 @@ export interface Slab { id: string; corners: string[]; thickness: number; densit
 export interface Wall { id: string; corners: string[]; thickness: number; density?: number; material?: string; level?: number; base_support?: string | null; label?: string }
 export interface Footing { B: number; L: number; t: number; type?: string; label?: string }
 export interface Support { node: string; type?: "fixed" | "pinned" | "roller"; dofs?: number[]; footing?: Footing; lateral?: boolean }
-export interface LoadCase { id: string; name: string; type: string; self_weight?: boolean }
+export interface LoadCase { id: string; name: string; type: string; self_weight?: boolean; sls_factor?: number }
 export interface Load {
   case: string; kind: "nodal" | "dist" | "point" | "area"; label?: string;
   node?: string; values?: number[];
@@ -33,6 +33,7 @@ export interface Model {
   load_cases: LoadCase[]; loads: Load[]; combinations: Combination[];
   generator?: Record<string, unknown>;
   notes?: string[];
+  wind?: Record<string, unknown>;
 }
 
 export interface Stations {
@@ -121,8 +122,44 @@ export interface SteelCatalog { families: Record<string, string>; sections: Cata
 export interface SuggestGroup {
   section: string; locked: boolean; families: string[]; from: string; to: string; changed: boolean; n_members: number;
   max_util: number | null; n_fail: number; mass_before: number | null; mass_after: number | null; largest_too_small: boolean;
+  defl_util?: number | null;
 }
 export interface SuggestResult {
   code: string; code_name: string; target: number; converged: boolean; limit_slenderness: boolean; iterations: number; groups: SuggestGroup[];
   sections: Record<string, Section>; design: SteelDesignResult; notes: string[];
+  check_deflection?: boolean; deflection?: DeflectionResult | null;
+}
+
+/** Deflection limits as L/n (H/n for drift). */
+export interface DeflectionLimits { floor_live: number; floor_total: number; roof_live: number; roof_total: number; drift_multi: number; drift_single: number }
+/** One beam span, cantilever, truss or column storey with its worst serviceability combination (lengths in m). */
+export interface DeflectionItem {
+  id: string; kind: "beam" | "cantilever" | "truss" | "drift"; roof: boolean; elements: string[]; role: string; L: number;
+  util: number; delta: number; allow: number; limit: string; which: "total" | "live" | "wind" | "drift"; combo: string;
+  axis: "y" | "z" | "A"; at: string | null; status: "ok" | "fail";
+}
+export interface DeflectionResult {
+  combinations: { id: string; name: string; kind: "total" | "live" | "wind" }[]; limits: DeflectionLimits; drift_limit: number;
+  items: DeflectionItem[]; members: Record<string, { id: string; util: number; status: "ok" | "fail"; span: string; kind: string }>;
+  summary: { n: number; ok: number; fail: number; max_util: number | null }; notes: string[];
+}
+
+/** DPT 1311-50 wind generator (backend wind.py); pressures in kN/m², lengths in m, forces in kN. */
+export interface WindParams { zone: "1" | "2" | "3" | "4A" | "4B"; importance: "low" | "normal" | "high" | "very_high"; exposure: "A" | "B";
+  internal: "1" | "2" | "3"; use_tf: boolean; ridge: "auto" | "x" | "y"; roof_slope: number | null; all_corners: boolean; replace: boolean }
+export interface WindCaseSummary { id: string; name: string; case: 1 | 2; cpi: number; zones: Record<string, { cpcg: number; p: number }>; resultant: number[]; n_loads: number }
+export interface WindSummary {
+  params: WindParams; V50: number; TF: number; tf_used: number; V: number; q: number; Iw: number; Iw_sls: number; h: number; He: number; H: number;
+  Ce: number; slope: number; ridge: "x" | "y"; Ds: number; z_edge: number; y_end: number; B_across: number; B_along: number; cpi: [number, number];
+  sls_factor: number; cases: WindCaseSummary[]; notes: string[]; zone_name: string; removed_cases: string[];
+}
+
+/** Bill of quantities (backend boq.py). Lengths m, mass kg, volume m³, prices per kg / per m³ in the chosen currency. */
+export interface BoqOptions { allowance: number; currency: string; prices: Record<string, number>; concrete_price: number | null }
+export interface BoqRow { section: string; description: string; family: string; material: string; kind: string; A: number; kg_per_m: number;
+  mass_source: string; n: number; length: number; roles: string[]; mass?: number; mass_total?: number; volume?: number; unit_price?: number | null; cost: number | null }
+export interface BoqResult {
+  currency: string; allowance: number; rows: BoqRow[]; families: { family: string; mass: number; mass_total: number; length: number; cost: number | null }[];
+  by_type: { role: string; length: number; mass: number }[];
+  totals: { steel_mass: number; steel_mass_total: number; steel_length: number; concrete_volume: number; cost: number | null; complete: boolean }; notes: string[];
 }

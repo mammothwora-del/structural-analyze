@@ -44,6 +44,7 @@ export function TopBar() {
     ],
     Loads: [
       ["Load visualisation", () => set({ mode: "loads", view: "3d" })],
+      ["Wind loads, Thai DPT 1311-50…", () => set({ dialog: "wind" }), !model],
       ["Load cases", () => set({ bottomTab: "cases" })],
       ["Combinations", () => set({ bottomTab: "combos" })],
     ],
@@ -54,6 +55,7 @@ export function TopBar() {
       ["Dashboard", () => set({ view: "dashboard" }), !results], ["Reactions table", () => set({ bottomTab: "reactions" }), !results], ["Member results table", () => set({ bottomTab: "members" }), !results]],
     Export: [
       ["PDF calculation report…", () => set({ dialog: "report" }), !model],
+      ["Quantities and cost (BOQ, Excel)…", () => set({ dialog: "boq" }), !model],
       ["Results (.csv)", exportCsv, !results],
       ["Viewport image (.png)", () => { const c = document.querySelector("canvas"); if (c) c.toBlob((b) => b && download("viewport.png", b)); }],
       ["Model only (.json)", () => model && download(`${safeName(model.name)}.json`, JSON.stringify(model, null, 1)), !model],

@@ -18,6 +18,7 @@ import numpy as np
 from .analysis import analyze
 from .sections import MATERIALS, section_properties
 from .steel_catalog import ANALYSIS_ONLY, FAMILIES, SHAPE_FAMILIES, as_section, family
+from .serviceability import deflection_checks
 from .steel_design import (NotCovered, check_member, design_combinations, member_forces, member_params, resolve_code,
                            steel_design)
 
@@ -40,12 +41,19 @@ def _util(sec, mat, p, forces, code):
 
 
 def suggest_sections(model: dict, code: str | None = None, target: float = 1.0, groups: dict | None = None,
-                     max_iter: int = 6, limit_slenderness: bool = True) -> dict:
+                     max_iter: int = 6, limit_slenderness: bool = True, check_deflection: bool = False,
+                     deflection_limits: dict | None = None, wind_factor: float | None = None) -> dict:
     """groups: {section_id: "keep" | "lock" | a family: "H", "I", "C", "L", "SHS", "RHS", "CHS"} (default "keep":
     the families of the same shape).
 
     limit_slenderness: also require KL/r <= 200 for members in compression and L/r <= 300 for members only in
     tension. These are the AISC 360-16 recommendations (user notes to E2 and D1), not a strength check.
+
+    check_deflection: also meet the deflection and drift limits of serviceability.deflection_checks. In each pass, a
+    span over its limit asks every section in it for a stiffness of at least (current stiffness x utilisation): the
+    moment of inertia about the bending axis for beams and drift, the area for truss members. That scaling is
+    approximate (other members share the stiffness), so the passes repeat with a fresh analysis and the final check is
+    a full deflection check of the final sizes.
     """
     code = resolve_code(model, code)
     target = float(target)
@@ -96,6 +104,7 @@ def suggest_sections(model: dict, code: str | None = None, target: float = 1.0, 
             raise ValueError("The analysis failed, so the sections cannot be sized: " + "; ".join(
                 w["message"] for w in res.get("warnings", []) if w.get("level") == "error")[:300])
         changes, short = [], set()
+        need = _stiffness_needs(m, res, deflection_limits, wind_factor) if check_deflection else {}
         for sid, pl in plan.items():
             if not pl:
                 continue
@@ -112,6 +121,8 @@ def suggest_sections(model: dict, code: str | None = None, target: float = 1.0, 
             pick = None
             for c in pl["cands"]:
                 sec = as_section(c, pl["material"])
+                if not _stiff_enough(sec, need.get(sid)):
+                    continue
                 if limit_slenderness and any((r := slenderness(sec, p, f))[0] > r[1] for p, f in jobs):
                     continue
                 if all((u := _util(sec, mat, p, f, code)) is not None and u <= target + 1e-9 for p, f in jobs):
@@ -126,7 +137,7 @@ def suggest_sections(model: dict, code: str | None = None, target: float = 1.0, 
             if pick.get("catalog") in seen[sid][:-1]:
                 upward.add(sid)
             if sid in upward and cur.get("catalog") and section_properties(pick).A < section_properties(cur).A \
-                    and all(u is not None and u <= target + 1e-9 for u, _ in cur_u) \
+                    and all(u is not None and u <= target + 1e-9 for u, _ in cur_u) and _stiff_enough(cur, need.get(sid)) \
                     and not (limit_slenderness and any((r := slenderness(cur, p, f))[0] > r[1] for p, f in jobs)):
                 pick = cur
             seen[sid].append(pick.get("catalog"))
@@ -139,6 +150,7 @@ def suggest_sections(model: dict, code: str | None = None, target: float = 1.0, 
             break
 
     final = steel_design(m, code)
+    defl = deflection_checks(m, None, deflection_limits, wind_factor) if check_deflection else None
     rows = []
     for sid, pl in plan.items():
         members = [final["members"][e["id"]] for e in by_sec[sid] if e["id"] in final["members"]]
@@ -151,7 +163,8 @@ def suggest_sections(model: dict, code: str | None = None, target: float = 1.0, 
                      "n_members": len(by_sec[sid]), "max_util": max(utils) if utils else None,
                      "n_fail": sum(1 for x in members if x.get("status") == "fail"),
                      "mass_before": mass(before), "mass_after": mass(after),
-                     "largest_too_small": sid in short})
+                     "largest_too_small": sid in short,
+                     "defl_util": _group_defl(defl, by_sec[sid]) if defl else None})
     if short:
         notes.append("Even the largest standard size does not pass in: " + ", ".join(sorted(short))
                      + ". Use another family, split the group into several sections, or change the structure.")
@@ -161,16 +174,55 @@ def suggest_sections(model: dict, code: str | None = None, target: float = 1.0, 
     if limit_slenderness:
         notes.append("Slenderness limited to KL/r <= 200 for members in compression and L/r <= 300 for members only in "
                      "tension (AISC 360-16 user notes to E2 and D1), with the K factors and lengths set on the members.")
+    if defl:
+        bad = [i for i in defl["items"] if i["status"] == "fail"]
+        notes.append("Deflection and drift limits were included in the sizing. Final check: "
+                     + (f"{len(bad)} of {len(defl['items'])} spans or storeys still over the limit (see Deflection)."
+                        if bad else f"all {len(defl['items'])} spans and storeys within the limits."))
+        notes.append("Sizing for drift raises the column stiffness only. Where beams or bracing carry most of the sway, "
+                     "change those by hand.")
     notes += [
         "Suggested sizes are the lightest standard size per group that passes the implemented checks at the target "
         "utilisation. Groups are the model's section ids: every member of a group gets the same size.",
-        "Not checked: connections, deflection limits, vibration, fire, fatigue, and anything listed in the steel "
+        "Not checked: connections, " + ("" if check_deflection else "deflection limits, ") + "vibration, fire, fatigue, and anything listed in the steel "
         "design notes. Review the sizes before using them.",
     ]
     return {"code": final["code"], "code_name": final["code_name"], "target": target, "converged": converged,
-            "limit_slenderness": limit_slenderness,
+            "limit_slenderness": limit_slenderness, "check_deflection": check_deflection, "deflection": defl,
             "iterations": len(history), "history": history, "groups": rows, "sections": m["sections"],
             "design": final, "notes": notes}
+
+
+def _stiffness_needs(m: dict, res: dict, limits, wind_factor) -> dict:
+    """{section id: {"Iy"|"Iz"|"A": required value}} from the spans that are over their deflection limit."""
+    d = deflection_checks(m, res, limits, wind_factor)
+    els = {e["id"]: e for e in m["elements"]}
+    need: dict[str, dict] = {}
+    for it in d["items"]:
+        if it["util"] <= 1.0 + 1e-9:
+            continue
+        key = "A" if it["kind"] == "truss" else ("Iy" if it["axis"] == "y" else "Iz")
+        for eid in it["elements"]:
+            sid = els[eid]["section"]
+            try:
+                cur = getattr(section_properties(m["sections"][sid]), key)
+            except (KeyError, ValueError):
+                continue
+            n = need.setdefault(sid, {})
+            n[key] = max(n.get(key, 0.0), cur * it["util"])
+    return need
+
+
+def _stiff_enough(sec: dict, need: dict | None) -> bool:
+    if not need:
+        return True
+    sp = section_properties(sec)
+    return all(getattr(sp, k) >= v * (1 - 1e-9) for k, v in need.items())
+
+
+def _group_defl(defl: dict, elems: list[dict]) -> float | None:
+    u = [defl["members"][e["id"]]["util"] for e in elems if e["id"] in defl["members"]]
+    return max(u) if u else None
 
 
 def _mass(sec: dict, elems: list[dict], xyz: dict) -> float | None:
