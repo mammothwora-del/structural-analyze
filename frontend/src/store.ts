@@ -21,6 +21,7 @@ interface State {
   loadSel: string;              // case or combination id
   selection: Selection;
   multi: string[];              // multi-selected element ids
+  boxSelect: boolean;           // drag a box in the 3D view to select members
   forceComp: ForceComp;
   shellComp: ShellComp;
   deformScale: number;
@@ -59,6 +60,8 @@ interface State {
   dialog: null | "dxf" | "report";
   reportInfo: { engineer: string; project: string; lang?: "en" | "th" };
   set: (p: Partial<State>) => void;
+  /** select these members (replacing the selection, or added to it) */
+  selectMembers: (ids: string[], add?: boolean) => void;
   setModel: (m: Model, keepResults?: boolean) => void;
   editModel: (fn: (m: Model) => void) => void;
   undo: () => void;
@@ -85,13 +88,20 @@ const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
 
 export const useStore = create<State>((set, get) => ({
   model: null, results: null, resultsStale: false, busy: false, error: null, backendOk: null,
-  mode: "model", view: "3d", loadSel: "DL", selection: null, multi: [],
+  mode: "model", view: "3d", loadSel: "DL", selection: null, multi: [], boxSelect: false,
   forceComp: "My", shellComp: "vm", deformScale: 50, animate: true, showLabels: false, showSlabs: true,
   showDims: true, labelSize: (() => { try { return Math.min(3, Math.max(0.6, +(localStorage.getItem("labelSize") ?? 1) || 1)); } catch { return 1; } })(),
   hiddenTypes: {}, maxLevel: null, exploded: 0, ortho: false, pathDir: "auto", trace: null, isolated: null,
   bottomTab: "log", log: [], history: [], buckling: null, pdelta: null, bucklingMode: 0, stabBusy: false, stabError: null, steel: null, steelCode: "", steelBusy: false, steelError: null,
   designTab: "steel", rc: null, rcOptions: { main_grade: "SD40", tie_grade: "SR24", cover: 0.04 }, rcBusy: false, rcError: null, dialog: null, reportInfo: { engineer: "", project: "" }, colorTransform: "sqrt", units: (() => { try { return (localStorage.getItem("units") as UnitSystem) || "SI"; } catch { return "SI"; } })(),
   set: (p) => set(p),
+  selectMembers: (ids, add = false) => {
+    const st = get();
+    const prev = add ? [...(st.selection?.kind === "element" ? [st.selection.id] : []), ...st.multi.filter((x) => st.model?.elements.some((e) => e.id === x))] : [];
+    const all = [...new Set([...prev, ...ids])];
+    if (all.length === 1) set({ selection: { kind: "element", id: all[0] }, multi: [] });
+    else set({ selection: null, multi: all });
+  },
   setModel: (m, keepResults = false) => set({ ...NO_STAB, model: m, results: keepResults ? get().results : null, resultsStale: false, trace: null, selection: null }),
   editModel: (fn) => {
     const m = get().model;

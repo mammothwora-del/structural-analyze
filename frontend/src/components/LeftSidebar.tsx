@@ -475,7 +475,7 @@ function AddNode() {
 }
 
 function Sections() {
-  const { model, editModel, redesign, busy, steelBusy } = useStore();
+  const { model, editModel, redesign, busy, steelBusy, selectMembers } = useStore();
   const [edit, setEdit] = useState<string | null>(null);
   const [newId, setNewId] = useState("");
   if (!model) return null;
@@ -501,6 +501,11 @@ function Sections() {
               <span className="truncate"><b className="text-ink-200">{k}</b> {s.name}</span>
               <span className="shrink-0 text-ink-400">{used} used {edit === k ? "▾" : "✎"}</span>
             </button>
+            {used > 0 && edit !== k && (
+              <button className="text-[10px] text-ink-500 hover:text-accent -mt-1 mb-1" onClick={() => selectMembers(model.elements.filter((e) => e.section === k).map((e) => e.id))}>
+                select these {used} members
+              </button>
+            )}
             {edit === k && (
               <SectionEditor model={model} value={s} onCancel={() => setEdit(null)} onSave={(sec) => save(k, sec, false)}
                 onSaveRedesign={busy || steelBusy ? undefined : (sec) => save(k, sec, true)} />
@@ -515,7 +520,7 @@ function Sections() {
         <SectionEditor key="new" model={model} value={{ shape: "I", material: steelMat, ...{ h: 0.3, bf: 0.15, tw: 0.0065, tf: 0.009 } }} saveLabel="Add section"
           onSave={(sec) => { editModel((m) => { m.sections[newId] = sec; }); setNewId(""); }} />
       )}
-      <div className="text-[10px] text-ink-400 mt-2">To give some members a different section: select them (shift-click) and pick the section in the right panel.</div>
+      <div className="text-[10px] text-ink-400 mt-2">To change only some members: select them (shift-click, Box select, or Select members in the right panel), then change their size in the right panel.</div>
     </div>
   );
 }

@@ -217,6 +217,18 @@ The sections a generator gives are **starting sizes, not designed sizes**. You c
   circle), and choose the material.
   *Save, analyse and re-design* applies the change, analyses again and re-runs the design. *New section* adds a
   section id, which you can then give to selected members in the right panel.
+- **Many members at once.** Select members, then change them together in the right panel:
+  - *Select members* (right panel, nothing selected): all members, all of a type (columns, truss chords, purlins, ...),
+    by section or by level. Only members shown in the 3D view are selected, so hide components, use the section cut
+    or isolate first to narrow it down. Shift-click or *Add to the selection* adds to it. `Ctrl+A` selects every member
+    shown.
+  - *Box select* (View panel or `B`): drag left to right for members fully inside the box, right to left for members
+    the box touches. Shift adds to the selection.
+  - *Size and shape (all selected)*: one section editor for the whole selection. If the selection is every member of
+    one section, that section is changed; otherwise the selected members get a new section id (e.g. `COL-2`), or an
+    existing section with the same size and material is reused, and the other members keep theirs.
+  - *Steel design settings (all selected)*: K factors, unbraced length and Cb for every selected member. `Del`
+    deletes the selected members (`Ctrl+Z` undoes).
 - **Suggest sizes** (Design mode, steel tab). For each section group (all members with the same section id), this
   finds the lightest standard size that passes the steel checks at a target utilisation (default 1.0). Per group you
   can keep the shape, switch to H, I-beam, channel, equal angle, SHS, RHS or CHS, or lock the size.
