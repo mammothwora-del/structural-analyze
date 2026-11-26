@@ -187,6 +187,27 @@ TH: dict[str, str] = {
     "Design notes and assumptions": "หมายเหตุและสมมติฐานการออกแบบ",
     "({k} members)": "({k} องค์อาคาร)",
     "({k} member)": "({k} องค์อาคาร)",
+    # deflection
+    "Deflection check could not run: {e}": "ตรวจสอบการแอ่นตัวไม่ได้: {e}",
+    "Deflection and drift (serviceability)": "การแอ่นตัวและการเคลื่อนตัวทางข้าง (สภาวะใช้งาน)",
+    "DEFL_LIMITS": "เกณฑ์: พื้น L/{fl} น้ำหนักจร, L/{ft} น้ำหนักรวม; องค์อาคารหลังคา L/{rl} น้ำหนักจรหรือแรงลม, L/{rt} น้ำหนักรวม; "
+                   "คานยื่นใช้ 2L; การเคลื่อนตัวระหว่างชั้น H/{dr}",
+    "Within the limit": "อยู่ในเกณฑ์",
+    "Over the limit": "เกินเกณฑ์",
+    "Max deflection / limit": "การแอ่นตัว / เกณฑ์ สูงสุด",
+    "L or H (m)": "L หรือ H (ม.)",
+    "δ (mm)": "δ (มม.)",
+    "Allowed (mm)": "ยอมให้ (มม.)",
+    "Limit": "เกณฑ์",
+    "span": "ช่วงคาน",
+    "cantilever": "คานยื่น",
+    "truss": "โครงถัก",
+    "storey drift": "การเคลื่อนตัวระหว่างชั้น",
+    "Deflection notes and assumptions": "หมายเหตุและสมมติฐานการแอ่นตัว",
+    "Connections, base plates, foundations, punching shear, slabs, walls, fatigue, fire, vibration and detailing "
+    "(anchorage, laps, curtailment) are not checked by this report.":
+        "รายการคำนวณนี้ไม่ได้ตรวจสอบรอยต่อ แผ่นฐาน ฐานราก แรงเฉือนทะลุ แผ่นพื้น ผนัง ความล้า อัคคีภัย การสั่นสะเทือน "
+        "และรายละเอียดการเสริมเหล็ก (ระยะฝัง ระยะทาบ การตัดเหล็ก)",
     # closing
     "Limitations": "ข้อจำกัด",
     "The analysis is linear elastic. Second-order effects are included only where a P-Delta load is listed.":

@@ -111,6 +111,7 @@ const PARTS: [string, string, boolean][] = [
   ["stability", "Elastic critical buckling", false],
   ["steel", "Steel member design", true],
   ["rc", "RC beam and column design", true],
+  ["deflection", "Deflection and drift (serviceability)", true],
 ];
 
 function ReportDialog({ onDone }: { onDone: () => void }) {
@@ -132,6 +133,7 @@ function ReportDialog({ onDone }: { onDone: () => void }) {
       const pdf = await api.report({
         model, include: inc, steel_code: s.steelCode || undefined, rc_options: s.rcOptions, stability_load: stabLoad || undefined,
         image: canvas ? canvas.toDataURL("image/png") : undefined, project: { title, project: info.project, engineer: info.engineer }, lang: info.lang,
+        deflection: s.deflSettings,
       });
       download(`${safeName(title)}-report${info.lang === "th" ? "-th" : ""}.pdf`, pdf);
       s.set({ log: [...useStore.getState().log, `PDF calculation report created (${(pdf.size / 1024).toFixed(0)} kB). The server re-ran the analysis${inc.steel || inc.rc ? " and the designs" : ""} for it.`] });
@@ -168,6 +170,7 @@ function ReportDialog({ onDone }: { onDone: () => void }) {
             <input type="checkbox" checked={inc[k]} onChange={(e) => setInc({ ...inc, [k]: e.target.checked })} />
             <span>{label}</span>
             {k === "steel" && inc.steel && <span className="text-ink-500 truncate">({code})</span>}
+            {k === "deflection" && inc.deflection && <span className="text-ink-500">(limits from the Deflection tab)</span>}
             {k === "rc" && inc.rc && <span className="text-ink-500">({s.rcOptions.main_grade} / {s.rcOptions.tie_grade}, cover {(s.rcOptions.cover * 100).toFixed(1)} cm)</span>}
           </label>
         ))}

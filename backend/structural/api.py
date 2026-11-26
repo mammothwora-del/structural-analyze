@@ -86,11 +86,31 @@ def run_steel_design(req: dict):
 @app.post("/api/design/steel/suggest")
 def run_steel_suggest(req: dict):
     """{"model": {...}, "code": ..., "target": 1.0, "groups": {"COL": "keep" | "lock" | "H" | "SHS" | "RHS" | "CHS"},
-    "limit_slenderness": true}"""
+    "limit_slenderness": true, "check_deflection": false, "limits": {...}, "wind_factor": null}"""
     from .steel_sizing import suggest_sections
     try:
         return _r(suggest_sections(req["model"], req.get("code") or None, float(req.get("target") or 1.0), req.get("groups") or {},
-                                   limit_slenderness=bool(req.get("limit_slenderness", True))))
+                                   limit_slenderness=bool(req.get("limit_slenderness", True)),
+                                   check_deflection=bool(req.get("check_deflection", False)),
+                                   deflection_limits=req.get("limits") or None,
+                                   wind_factor=_opt_float(req.get("wind_factor"))))
+    except ModelError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except (KeyError, ValueError, IndexError, TypeError) as exc:
+        raise HTTPException(400, f"Invalid request: {exc}") from exc
+
+
+def _opt_float(v):
+    return None if v in (None, "") else float(v)
+
+
+@app.post("/api/design/deflection")
+def run_deflection(req: dict):
+    """{"model": {...}, "limits": {"floor_live": 360, "floor_total": 240, "roof_live": 240, "roof_total": 180,
+    "drift_multi": 400, "drift_single": 200}, "wind_factor": 1.0}  (limits as L/n; all optional)"""
+    from .serviceability import deflection_checks
+    try:
+        return _r(deflection_checks(req["model"], None, req.get("limits") or None, _opt_float(req.get("wind_factor"))))
     except ModelError as exc:
         raise HTTPException(422, str(exc)) from exc
     except (KeyError, ValueError, IndexError, TypeError) as exc:
@@ -147,7 +167,7 @@ def make_report(req: dict):
     try:
         pdf = build_report(req["model"], req.get("include"), req.get("steel_code") or None, req.get("rc_options"),
                            req.get("image"), req.get("stability_load") or None, req.get("project"),
-                           lang=req.get("lang") or "en")
+                           lang=req.get("lang") or "en", deflection=req.get("deflection") or None)
     except (ModelError, ReportError) as exc:
         raise HTTPException(422, str(exc)) from exc
     except (KeyError, ValueError, IndexError, TypeError) as exc:

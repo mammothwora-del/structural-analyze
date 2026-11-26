@@ -121,8 +121,24 @@ export interface SteelCatalog { families: Record<string, string>; sections: Cata
 export interface SuggestGroup {
   section: string; locked: boolean; families: string[]; from: string; to: string; changed: boolean; n_members: number;
   max_util: number | null; n_fail: number; mass_before: number | null; mass_after: number | null; largest_too_small: boolean;
+  defl_util?: number | null;
 }
 export interface SuggestResult {
   code: string; code_name: string; target: number; converged: boolean; limit_slenderness: boolean; iterations: number; groups: SuggestGroup[];
   sections: Record<string, Section>; design: SteelDesignResult; notes: string[];
+  check_deflection?: boolean; deflection?: DeflectionResult | null;
+}
+
+/** Deflection limits as L/n (H/n for drift). */
+export interface DeflectionLimits { floor_live: number; floor_total: number; roof_live: number; roof_total: number; drift_multi: number; drift_single: number }
+/** One beam span, cantilever, truss or column storey with its worst serviceability combination (lengths in m). */
+export interface DeflectionItem {
+  id: string; kind: "beam" | "cantilever" | "truss" | "drift"; roof: boolean; elements: string[]; role: string; L: number;
+  util: number; delta: number; allow: number; limit: string; which: "total" | "live" | "wind" | "drift"; combo: string;
+  axis: "y" | "z" | "A"; at: string | null; status: "ok" | "fail";
+}
+export interface DeflectionResult {
+  combinations: { id: string; name: string; kind: "total" | "live" | "wind" }[]; limits: DeflectionLimits; drift_limit: number;
+  items: DeflectionItem[]; members: Record<string, { id: string; util: number; status: "ok" | "fail"; span: string; kind: string }>;
+  summary: { n: number; ok: number; fail: number; max_util: number | null }; notes: string[];
 }
