@@ -141,7 +141,8 @@ function SteelTab({ model }: { model: Model }) {
   );
 }
 
-const FAMILY_OPTIONS: [string, string][] = [["keep", "Same shape"], ["H", "H section"], ["SHS", "SHS"], ["RHS", "RHS"], ["CHS", "CHS"], ["lock", "Keep this size"]];
+const FAMILY_OPTIONS: [string, string][] = [["keep", "Same shape"], ["H", "H section"], ["I", "I-beam"], ["C", "Channel"], ["L", "Equal angle"],
+  ["SHS", "SHS"], ["RHS", "RHS"], ["CHS", "CHS (pipe)"], ["lock", "Keep this size"]];
 
 /** Lightest standard size per section group that passes, worked out on the server with fresh analyses. */
 function SuggestSizes({ model }: { model: Model }) {

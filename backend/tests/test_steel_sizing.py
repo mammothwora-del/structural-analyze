@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from structural.api import app
 from structural.generator import generate
 from structural.sections import section_properties
-from structural.steel_catalog import CATALOG, FAMILIES, family
+from structural.steel_catalog import CATALOG, FAMILIES, as_section, family
 from structural.steel_design import steel_design
 from structural.steel_sizing import suggest_sections
 from structural.structures import generate_truss2d, generate_warehouse
@@ -19,10 +19,12 @@ def test_catalog_entries_are_valid_and_sorted():
         assert len(es) >= 10
         assert [e["A"] for e in es] == sorted(e["A"] for e in es)
         for e in es:
-            assert section_properties(e).A == pytest.approx(e["A"])
+            assert section_properties(as_section(e, "SS400")).A == pytest.approx(e["A"])
     h400 = next(e for e in CATALOG if e["name"] == "H 400x200x8x13")
-    # nominal area without root radii: 2*0.2*0.013 + 0.374*0.008 = 8.192e-3 m² (table value with radii 8.412e-3)
-    assert h400["A"] == pytest.approx(8.192e-3, rel=1e-9)
+    # the supplier's area with root radii (84.12 cm2); from the nominal plates alone it would be 8.192e-3 m2
+    assert h400["source"] == "table" and h400["A"] == pytest.approx(8.412e-3, rel=1e-9)
+    nominal = next(e for e in CATALOG if e["source"] == "nominal" and e["family"] == "H")
+    assert section_properties(nominal).A == pytest.approx(nominal["A"])
     with pytest.raises(ValueError):
         family("W")
 
@@ -96,7 +98,7 @@ def test_no_steel_group_is_an_error_and_heavy_loads_are_reported():
 def test_api(warehouse):
     c = TestClient(app)
     cat = c.get("/api/sections/catalog").json()
-    assert set(cat["families"]) == {"H", "SHS", "RHS", "CHS"} and len(cat["sections"]) == len(CATALOG)
+    assert set(cat["families"]) == {"H", "I", "C", "L", "LC", "SHS", "RHS", "CHS"} and len(cat["sections"]) == len(CATALOG)
     m = generate_truss2d()
     r = c.post("/api/design/steel/suggest", json={"model": m, "target": 0.9})
     assert r.status_code == 200

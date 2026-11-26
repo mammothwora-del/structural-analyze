@@ -1,13 +1,17 @@
-"""Standard hot-rolled and hollow steel section sizes, by nominal dimensions.
+"""Standard steel section sizes offered in the section editor and by "Suggest sizes".
 
-H sections: TIS 1227 / JIS G 3192 (h x b x tw x tf, mm). SHS / RHS: JIS G 3466 (h x b x t, mm).
-CHS: JIS G 3444 (d x t, mm). Only the nominal dimensions are listed. Area, inertia and moduli are calculated
-from them by structural.sections, without root or corner radii, so they come out slightly below the
-manufacturers' tables (conservative). Check availability with the supplier.
+Two sources:
+  * the supplier tables in structural.steel_tables (H, I, channel, equal angle, lip channel, SHS, RHS, pipe), which
+    carry the supplier's area, inertia and elastic moduli ("source": "table");
+  * the nominal sizes below (H: TIS 1227 / JIS G 3192; SHS / RHS: JIS G 3466; CHS: JIS G 3444), kept where the
+    supplier table has no such size. Their properties are calculated from the nominal dimensions without root or
+    corner radii, so they come out slightly below the manufacturers' tables ("source": "nominal").
+Check availability with the supplier.
 """
 from __future__ import annotations
 
 from .sections import section_properties
+from .steel_tables import TABLE
 
 H = [  # narrow flange (beams)
     (100, 50, 5, 7), (125, 60, 6, 8), (150, 75, 5, 7), (175, 90, 5, 8), (200, 100, 5.5, 8), (250, 125, 6, 9),
@@ -40,12 +44,18 @@ CHS = [
 
 FAMILIES = {
     "H": "H sections (TIS 1227 / JIS G 3192)",
-    "SHS": "Square hollow sections (JIS G 3466)",
-    "RHS": "Rectangular hollow sections (JIS G 3466)",
-    "CHS": "Circular hollow sections (JIS G 3444)",
+    "I": "I-beams (TIS 1227 / JIS G 3192)",
+    "C": "Channels (TIS 1227 / JIS G 3192)",
+    "L": "Equal angles (TIS 1227 / JIS G 3192)",
+    "LC": "Lip channels, cold-formed (analysis only)",
+    "SHS": "Square hollow sections",
+    "RHS": "Rectangular hollow sections",
+    "CHS": "Circular hollow sections (pipe)",
 }
 # the families a section of a given shape may change to when "keep the shape" is asked
-SHAPE_FAMILIES = {"I": ("H",), "box": ("SHS", "RHS"), "pipe": ("CHS",)}
+SHAPE_FAMILIES = {"I": ("H", "I"), "channel": ("C",), "angle": ("L",), "box": ("SHS", "RHS"), "pipe": ("CHS",)}
+# families with no design checks here (cold-formed): offered in the editor, never picked by "Suggest sizes"
+ANALYSIS_ONLY = {"LC"}
 
 
 def _g(v):
@@ -53,22 +63,32 @@ def _g(v):
 
 
 def _entries():
+    """Supplier table sizes first (with their table properties); the nominal sizes above fill the gaps."""
     out = []
+    for e in TABLE.values():
+        out.append({"family": e["family"], "name": e["name"], "shape": e["shape"], "fab": e["fab"], **e["dims"],
+                    "A": e["A"], "mass": e["mass"], "source": "table"})
+    seen = {e["name"] for e in out}
+    nominal = []
     for h, b, tw, tf in H:
-        out.append({"family": "H", "name": f"H {_g(h)}x{_g(b)}x{_g(tw)}x{_g(tf)}", "shape": "I", "fab": "rolled",
-                    "h": h / 1000, "bf": b / 1000, "tw": tw / 1000, "tf": tf / 1000})
+        nominal.append({"family": "H", "name": f"H {_g(h)}x{_g(b)}x{_g(tw)}x{_g(tf)}", "shape": "I", "fab": "rolled",
+                        "h": h / 1000, "bf": b / 1000, "tw": tw / 1000, "tf": tf / 1000})
     for a, t in SHS:
-        out.append({"family": "SHS", "name": f"SHS {_g(a)}x{_g(a)}x{_g(t)}", "shape": "box", "fab": "cold",
-                    "h": a / 1000, "b": a / 1000, "t": t / 1000})
+        nominal.append({"family": "SHS", "name": f"SHS {_g(a)}x{_g(a)}x{_g(t)}", "shape": "box", "fab": "cold",
+                        "h": a / 1000, "b": a / 1000, "t": t / 1000})
     for h, b, t in RHS:
-        out.append({"family": "RHS", "name": f"RHS {_g(h)}x{_g(b)}x{_g(t)}", "shape": "box", "fab": "cold",
-                    "h": h / 1000, "b": b / 1000, "t": t / 1000})
+        nominal.append({"family": "RHS", "name": f"RHS {_g(h)}x{_g(b)}x{_g(t)}", "shape": "box", "fab": "cold",
+                        "h": h / 1000, "b": b / 1000, "t": t / 1000})
     for d, t in CHS:
-        out.append({"family": "CHS", "name": f"CHS {_g(d)}x{_g(t)}", "shape": "pipe", "fab": "cold",
-                    "d": d / 1000, "t": t / 1000})
-    for e in out:
+        nominal.append({"family": "CHS", "name": f"CHS {_g(d)}x{_g(t)}", "shape": "pipe", "fab": "cold",
+                        "d": d / 1000, "t": t / 1000})
+    for e in nominal:
+        if e["name"] in seen:
+            continue
         e["A"] = section_properties(e).A
         e["mass"] = e["A"] * 7850.0                    # kg/m, from the nominal area
+        e["source"] = "nominal"
+        out.append(e)
     return sorted(out, key=lambda e: (e["family"], e["A"]))
 
 
@@ -84,9 +104,9 @@ def family(name: str) -> list[dict]:
 
 def as_section(entry: dict, material: str) -> dict:
     """A model section from a catalogue entry."""
-    keys = ("shape", "fab", "h", "bf", "tw", "tf", "b", "t", "d")
+    keys = ("shape", "fab", "h", "bf", "tw", "tf", "b", "t", "d", "c")
     return {**{k: entry[k] for k in keys if k in entry}, "material": material, "name": f"{entry['name']} {material}",
             "catalog": entry["name"]}
 
 
-__all__ = ["CATALOG", "FAMILIES", "SHAPE_FAMILIES", "family", "as_section"]
+__all__ = ["CATALOG", "FAMILIES", "SHAPE_FAMILIES", "ANALYSIS_ONLY", "family", "as_section"]

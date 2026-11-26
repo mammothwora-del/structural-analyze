@@ -213,28 +213,44 @@ combination and location, and to set its design values (K about each axis, unbra
 The sections a generator gives are **starting sizes, not designed sizes**. You can change them in two ways:
 
 - **Sections tab.** Click a section to change its shape and size for every member that uses it. Pick a
-  **standard size** or type **your own dimensions** (I/H, box, tube, rectangle or circle), and choose the material.
+  **standard size** or type **your own dimensions** (I/H, channel, equal angle, lip channel, box, tube, rectangle or
+  circle), and choose the material.
   *Save, analyse and re-design* applies the change, analyses again and re-runs the design. *New section* adds a
   section id, which you can then give to selected members in the right panel.
 - **Suggest sizes** (Design mode, steel tab). For each section group (all members with the same section id), this
   finds the lightest standard size that passes the steel checks at a target utilisation (default 1.0). Per group you
-  can keep the shape, switch to H, SHS, RHS or CHS, or lock the size.
+  can keep the shape, switch to H, I-beam, channel, equal angle, SHS, RHS or CHS, or lock the size.
   - The server analyses again after every change, because the forces depend on the sizes. It repeats until no size
-    changes, and then checks the final model from scratch. The numbers shown come from that final check.
+    changes, and then checks the final model from scratch. The numbers shown come from that final check. A group
+    that comes back to a size it had before (a lighter but stiffer size attracts more force) only moves up from then
+    on, so the passes settle.
   - Optionally, slenderness is limited to KL/r ≤ 200 in compression and L/r ≤ 300 in tension (AISC 360-16 user notes).
   - *Apply and re-design* puts the sizes in the model.
-- **Standard sizes** (`structural/steel_catalog.py`):
-  - H sections to TIS 1227 / JIS G 3192 (narrow, medium and wide flange).
-  - SHS and RHS to JIS G 3466.
-  - CHS to JIS G 3444.
-
-  Only nominal dimensions are stored. Properties are calculated without root or corner radii, so they come out a
-  little below the supplier's tables.
+- **Standard sizes** (`structural/steel_catalog.py`, 324 sizes):
+  - **Supplier tables** (`structural/steel_tables.py`, 293 sizes from a Thai supplier's catalogue): H sections,
+    I-beams, channels and equal angles to TIS 1227 / JIS G 3192, cold-formed lip channels, square and rectangular
+    tubes and pipe. These sizes use the **table's** area, inertia and elastic moduli (fillets included). J, Cw and the
+    shear centre come from the dimensions; plastic moduli are those of the dimensions scaled by S_table / S_dims.
+    Every row was checked against its dimensions; 12 misprints were corrected and are listed in the file.
+  - **Nominal sizes** fill the gaps (H to TIS 1227 / JIS G 3192, SHS / RHS to JIS G 3466, CHS to JIS G 3444).
+    Their properties are calculated without root or corner radii, so they come out a little below a supplier's
+    table.
+  - If you change a dimension of a table size, the section becomes your own dimensions and is calculated again.
+- **Channels and equal angles** are designed with AISC 360-16 / Thai EIT (not EN 1993; reported as not covered there):
+  - Channel: E3 and E4 flexural-torsional buckling (shear centre and Cw from the dimensions), E7 slender elements,
+    F2 for compact channels (non-compact flanges: not covered), F6 minor axis, G2 / G7 shear, H1.
+  - Equal angle, checked about its **principal axes** (local y = major axis u along the axis of symmetry): E3 / E4
+    with E7 for slender legs, F10 (yielding 1.5 My, lateral-torsional buckling, leg local buckling), G3 on one leg,
+    H1. The eccentricity of an end connection through one leg (E5) is not included.
+  - Members are analysed through the centroid; torsion from loads off the shear centre is not checked.
+- **Lip channels** (cold-formed) are used in the analysis only: AISI S100 / EN 1993-1-3 are not implemented, so they
+  are reported as not covered and Suggest sizes does not pick them.
 - Suggested sizes cover only the implemented strength checks. Deflection, vibration, connections and the other items
   in the design notes are not part of the sizing.
 - **Tests:** `tests/test_steel_sizing.py`. They check that the final check passes and equals a normal design run, that
   one size lighter fails, that locking, family changes and the target work, that the slenderness limits hold, and
-  that a group is reported when even the largest size is too small.
+  that a group is reported when even the largest size is too small. `tests/test_steel_tables.py` checks every table
+  row against its dimensions, the angle principal axes, and the channel and angle checks against hand calculations.
 
 ## RC beam and column design (Thai EIT 1008-38)
 

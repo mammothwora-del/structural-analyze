@@ -120,7 +120,19 @@ The integrated values at end j are checked against the FE nodal solution (`end_c
 * Design forces: linear superposition of the load-case results for each ultimate combination (combinations whose id
   or name contains SLS, SERV, service or characteristic are skipped). First-order forces.
 * Axes: y = major (My, Vz), z = minor (Mz, Vy). Compression N < 0.
-* Section properties for design ignore fillet and corner radii; flat widths of hollow sections are b − 3t.
+* Section properties for design ignore fillet and corner radii, except sizes from the supplier tables
+  (`steel_tables.py`): those use the table's A, I and S; Z = Z_dims · S_table / S_dims; J, Cw and the shear centre from
+  the dimensions. Flat widths of hollow sections are b − 3t.
+* Channel (`shape: channel`, h, b, tw, tf): y = major axis (the axis of symmetry), z = minor; Sz is the smaller
+  modulus (to the flange tips). Shear centre e = 3b'²tf / (6b'tf + h'tw) from the web centre-line, Cw =
+  tf b'³ h'² / 12 · (3b'tf + 2h'tw) / (6b'tf + h'tw) with centre-line b' = b − tw/2, h' = h − tf.
+* Equal angle (`shape: angle`, b, t): principal axes. y = u (major, along the axis of symmetry through the heel),
+  z = v (minor). Su = Iu / (b/√2) (leg tips); Sv = Iv / max(√2·c, (b + t)/√2 − √2·c). The shear centre is at the
+  heel: x0 = √2 (c − t/2). Set the member roll so that local y is the u axis.
+* Channels and angles are singly symmetric about the major axis, so flexural-torsional buckling (AISC E4-3) couples
+  torsion with major-axis buckling.
+* Lip channel (`shape: lipchannel`, h, b, c, t): properties from the table (or square-cornered plates); no design
+  rules (not covered).
 * EN 1993 class: the worst class over all stations and combinations, ignoring actions below 1 % of the resistance.
 * Member checks use the largest moments along the member with C_m from Table B.3 (linear moment: 0.6 + 0.4ψ ≥ 0.4;
   span moment governing: 1.0, conservative). Cross-section checks are made at every station.
@@ -128,10 +140,11 @@ The integrated values at end j are checked against the FE nodal solution (`end_c
 ## Suggested steel sizes (`structural/steel_sizing.py`)
 * A group is a section id. Every member of the group gets the same size, and the group's worst member governs.
 * Candidates are standard sizes of the chosen family, lightest first, from `steel_catalog.py`. "Same shape" means:
-  I to H, box to SHS + RHS, pipe to CHS. The first candidate passes when every member of the group meets the target
+  I to H + I-beam, channel to C, angle to L, box to SHS + RHS, pipe to CHS (lip channels are never picked). The first candidate passes when every member of the group meets the target
   utilisation with the current forces and, if asked, KL/r ≤ 200 (members ever in compression) or L/r ≤ 300 (members
   only in tension).
-* Repeat: analyse, size every group, until no group changes (at most 6 passes). The final model is then analysed and
+* Repeat: analyse, size every group, until no group changes (at most 6 passes). A group that returns to a size it had
+  in an earlier pass only moves to heavier sizes from then on (it keeps its current size while that still passes). The final model is then analysed and
   checked by `steel_design()`. Only that result is reported, as **calculated**.
 * A group where even the largest size fails keeps the largest size and is flagged. Deflection is not a sizing
   criterion.
