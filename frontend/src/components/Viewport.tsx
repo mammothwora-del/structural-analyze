@@ -1,4 +1,5 @@
 import { GizmoHelper, GizmoViewport, OrbitControls, OrthographicCamera, PerspectiveCamera } from "@react-three/drei";
+import { BoxSelectOverlay, SelectProbe } from "../three/BoxSelect";
 import { Canvas, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
@@ -95,6 +96,7 @@ export function Viewport() {
         <hemisphereLight args={["#bcd3ff", "#1a1f26", 0.35]} />
 
         <GridLines model={model} />
+        <SelectProbe model={model} />
 
         {/* MODEL & LOADS */}
         {mode === "stability" && (
@@ -181,6 +183,7 @@ export function Viewport() {
         </GizmoHelper>
       </Canvas>
 
+      <BoxSelectOverlay />
       <ModeBar />
       <ViewTools onView={setView} wrap={wrap} />
       {showResults && display && <Legend display={display} flows={flows} shellScale={sScale} />}
@@ -218,7 +221,7 @@ function ModeBar() {
 }
 
 function ViewTools({ onView, wrap }: { onView: (v: ViewName) => void; wrap: React.RefObject<HTMLDivElement> }) {
-  const { ortho, set, showLabels, animate, showSlabs, showDims, labelSize } = useStore();
+  const { ortho, set, showLabels, animate, showSlabs, showDims, labelSize, boxSelect } = useStore();
   const setSize = (v: number) => { set({ labelSize: v }); try { localStorage.setItem("labelSize", String(v)); } catch { /* storage unavailable */ } };
   const B = ({ on, children, onClick, title }: { on?: boolean; children: React.ReactNode; onClick: () => void; title: string }) => (
     <button title={title} onClick={onClick} className={`w-full px-2 py-1 rounded text-[11px] text-left ${on ? "bg-accent/20 text-accent" : "text-ink-300 hover:bg-ink-700"}`}>{children}</button>
@@ -236,6 +239,7 @@ function ViewTools({ onView, wrap }: { onView: (v: ViewName) => void; wrap: Reac
       <B title="Animate loads / flow / deformation" on={animate} onClick={() => set({ animate: !animate })}>Animate</B>
       <B title="Show slabs" on={showSlabs} onClick={() => set({ showSlabs: !showSlabs })}>Slabs</B>
       <B title="Dimensions between grid lines" on={showDims} onClick={() => set({ showDims: !showDims })}>Dims</B>
+      <B title="Drag a box to select members (B)" on={boxSelect} onClick={() => set({ boxSelect: !boxSelect })}>Box select</B>
       <label className="px-1 pt-0.5 text-[10px] text-ink-400" title="Size of grid names and dimension text">
         <div className="flex justify-between"><span>Text size</span><span>{Math.round(labelSize * 100)}%</span></div>
         <input type="range" min={0.6} max={3} step={0.1} value={labelSize} aria-label="Grid and dimension text size"

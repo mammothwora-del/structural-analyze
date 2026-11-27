@@ -10,6 +10,7 @@ import type { UnitsApi } from "../lib/units";
 import { COMP_KIND } from "../lib/display";
 import { elementReleases, isHinged } from "../lib/geometry";
 import { fmtCheck, statusTag } from "./DesignPanel";
+import { BulkDesign, BulkSection, QuickSelect } from "./BulkEdit";
 
 const Row = ({ k, v, unit }: { k: React.ReactNode; v: React.ReactNode; unit?: string }) => (
   <div className="flex justify-between gap-2 py-0.5 border-b border-ink-800/80">
@@ -43,11 +44,14 @@ export function Inspector() {
 }
 
 function EmptyPanel() {
+  const model = useStore((s) => s.model);
   return (
     <div className="text-ink-400 text-xs leading-relaxed">
       <div className="panel-title mb-2">Properties & Results</div>
       <p>Click a member, node or slab in the 3D view to inspect it. Shift/Ctrl-click to multi-select members (or nodes, to add a member between two nodes).</p>
-      <p className="mt-2">Keyboard: <span className="num">1–9</span> switch modes, <span className="num">Del</span> deletes the selected member, <span className="num">Ctrl+Z</span> undo, <span className="num">F5</span> analyze.</p>
+      <p className="mt-2">To change many members in one go, select them below or with Box select, then change their size in this panel.</p>
+      {model && <div className="mt-3 rounded border border-ink-700 bg-ink-950/50 p-2"><QuickSelect model={model} /></div>}
+      <p className="mt-3">Keyboard: <span className="num">1–9</span> switch modes, <span className="num">B</span> box select, <span className="num">Ctrl+A</span> select all members shown, <span className="num">Del</span> deletes the selected member(s), <span className="num">Ctrl+Z</span> undo, <span className="num">F5</span> analyze.</p>
     </div>
   );
 }
@@ -469,14 +473,29 @@ function MultiPanel({ model }: { model: Model }) {
   if (nodes.length === 2 && !els.length) return <NodePanel model={model} results={null} id={nodes[1]} />;
   return (
     <div>
-      <div className="text-lg font-semibold">{els.length} members selected</div>
-      <div className="flex flex-wrap gap-1 mt-2">{els.map((e) => <span key={e} className="tag bg-ink-800">{e}</span>)}</div>
-      <Section title="Assign section">
-        <select className="input" defaultValue="" onChange={(e) => e.target.value && editModel((m) => { for (const x of m.elements) if (els.includes(x.id)) x.section = e.target.value; })}>
+      <div className="flex items-baseline justify-between">
+        <div className="text-lg font-semibold">{els.length} members selected</div>
+        <button className="text-[11px] text-ink-400 hover:text-ink-100" onClick={() => set({ multi: [], selection: null })}>Clear</button>
+      </div>
+      <div className="flex flex-wrap gap-1 mt-2 max-h-16 overflow-y-auto">{els.map((e) => <span key={e} className="tag bg-ink-800">{e}</span>)}</div>
+      <details className="mt-2 rounded border border-ink-800 p-1.5">
+        <summary className="cursor-pointer text-[11px] text-ink-300">Change the selection</summary>
+        <div className="mt-1.5"><QuickSelect model={model} compact /></div>
+      </details>
+      <Section title="Size and shape (all selected)">
+        <BulkSection key={els.join(",")} model={model} ids={els} />
+      </Section>
+      <Section title="Or give them an existing section">
+        <select className="input" value="" onChange={(e) => e.target.value && editModel((m) => { for (const x of m.elements) if (els.includes(x.id)) x.section = e.target.value; })}>
           <option value="" disabled>Choose section…</option>
           {Object.entries(model.sections).map(([k, s]) => <option key={k} value={k}>{k} – {s.name}</option>)}
         </select>
       </Section>
+      {els.some((id) => model.materials[model.sections[model.elements.find((e) => e.id === id)?.section ?? ""]?.material ?? ""]?.kind === "steel") && (
+        <Section title="Steel design settings (all selected)">
+          <BulkDesign key={els.join(",")} model={model} ids={els} />
+        </Section>
+      )}
       {els.length > 0 && <EndReleases ids={els} />}
       <AddMemberLoad ids={els} />
       <div className="mt-4 flex gap-1.5">

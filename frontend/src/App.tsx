@@ -8,6 +8,8 @@ import { TopBar } from "./components/TopBar";
 import { MODES, Viewport } from "./components/Viewport";
 import { api } from "./lib/api";
 import { useStore } from "./store";
+import { visibleMembers } from "./lib/select";
+import { elementColorKey } from "./three/Members";
 
 export default function App() {
   const { view, error, set } = useStore();
@@ -25,8 +27,20 @@ export default function App() {
       const m = MODES.find((x) => x.key === e.key);
       if (m && !e.ctrlKey && !e.metaKey) st.set({ mode: m.id, view: "3d" });
       if (e.key === "F5") { e.preventDefault(); st.analyze(); }
-      if (e.key === "Escape") st.set({ selection: null, multi: [], trace: null });
+      if (e.key === "Escape") st.set({ selection: null, multi: [], trace: null, boxSelect: false });
+      if ((e.key === "b" || e.key === "B") && !e.ctrlKey && !e.metaKey && st.view === "3d") st.set({ boxSelect: !st.boxSelect });
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a" && st.model && st.view === "3d") {
+        e.preventDefault();
+        st.selectMembers(visibleMembers(st.model, st.hiddenTypes, st.maxLevel, st.isolated, elementColorKey).map((x) => x.id));
+      }
       if ((e.ctrlKey || e.metaKey) && e.key === "z") { e.preventDefault(); st.undo(); }
+      if (e.key === "Delete" && st.multi.length > 1 && !st.selection) {
+        const ids = new Set(st.multi);
+        if (st.model?.elements.some((x) => ids.has(x.id))) {
+          st.editModel((md) => { md.elements = md.elements.filter((x) => !ids.has(x.id)); md.loads = md.loads.filter((l) => !l.element || !ids.has(l.element)); });
+          st.set({ multi: [] });
+        }
+      }
       if (e.key === "Delete" && st.selection?.kind === "element") {
         const id = st.selection.id;
         st.editModel((md) => { md.elements = md.elements.filter((x) => x.id !== id); md.loads = md.loads.filter((l) => l.element !== id); });

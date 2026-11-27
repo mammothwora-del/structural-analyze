@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { visibleMembers } from "../lib/select";
 import * as THREE from "three";
 import { colorAt, normalize } from "../lib/colormap";
 import type { Display } from "../lib/display";
@@ -42,15 +43,7 @@ export function elementColorKey(e: Element) {
 
 export function useVisibleElements(model: Model) {
   const { hiddenTypes, maxLevel, isolated } = useStore();
-  return useMemo(() => {
-    const iso = isolated ? new Set(isolated) : null;
-    return model.elements.filter((e) => {
-      if (hiddenTypes[elementColorKey(e)]) return false;
-      if (maxLevel !== null && (e.level ?? 0) > maxLevel) return false;
-      if (iso && !iso.has(e.id)) return false;
-      return true;
-    });
-  }, [model, hiddenTypes, maxLevel, isolated]);
+  return useMemo(() => visibleMembers(model, hiddenTypes, maxLevel, isolated, elementColorKey), [model, hiddenTypes, maxLevel, isolated]);
 }
 
 /** Node positions (exploded view applied), including shell mesh nodes of the last analysis. */
